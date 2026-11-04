@@ -1,0 +1,4 @@
+# Install with: pip install -r requirements.txt
+# Packages are added here as the steps that need them are built.
+
+pytest==9.2.0  # runs the tests

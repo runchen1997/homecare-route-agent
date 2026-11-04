@@ -1,0 +1,17 @@
+# Python environments: .venv for the planner, .venv-train for fine-tuning experiments
+.venv/
+.venv-train/
+
+# Python caches
+__pycache__/
+.pytest_cache/
+
+# Large downloads and data built from them (maps, road networks, address index, timetables)
+data/
+
+# Java and the transit router, downloaded by hand
+tools/
+
+# Editor and local tool settings
+.idea/
+.claude/
