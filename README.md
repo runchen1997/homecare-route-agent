@@ -13,7 +13,7 @@ plan.
 
 ## First version
 
-1. Read the patient list (CSV): name, address, and an optional time window
+1. The model reads the patient list (CSV), one row at a time: name, address, and the time window if any
 2. Find each address on the map
 3. Work out the travel time between home and every patient
 4. The model plans tomorrow's visits
@@ -21,12 +21,19 @@ plan.
 
 ## The patient list
 
-| Column | Meaning |
+A CSV with a header row and one row per patient. The columns can be named and written as the
+nurse likes, because the model reads each row: `Patient, Where, When` with `after 1pm` works
+as well as `name, address, earliest, latest` with `13:00`. For each row the model writes down:
+
+| Field | Meaning |
 |---|---|
 | name | The patient's name |
-| address | Street address, e.g. `6502 18th Ave, Brooklyn` |
-| earliest | Optional: the visit may not start before this time (`HH:MM`) |
-| latest | Optional: the visit must be over by this time (`HH:MM`) |
+| address | The street address, as written |
+| earliest | The visit may not start before this time, if the row says so |
+| latest | The visit must be over by this time, if the row says so |
+
+Code checks what the model wrote. A time it can't read, or a window that ends before it
+starts, goes back to the model with the mistake for another try (three tries in all).
 
 See [examples/patients.csv](examples/patients.csv). [examples/18th_avenue.csv](examples/18th_avenue.csv)
 has ten patients around 18th Avenue in Brooklyn: from a home at 6302 18th Ave, five are within a
@@ -34,9 +41,10 @@ few blocks of each other, and the best day visits exactly those five.
 
 ## Commands
 
-Run from the project root, in the project's Python environment (`.venv`):
+Run from the project root, in the project's Python environment (`.venv`). The model runs in
+[Ollama](https://ollama.com): install it, then `ollama pull llama3.1:8b`.
 
 | What | Command |
 |---|---|
-| Show how a patient list is read | `.venv/Scripts/python -m homecare.patients examples/patients.csv` |
+| Show how the model reads a patient list | `.venv/Scripts/python -m homecare.patients examples/patients.csv` |
 | Run the tests | `.venv/Scripts/python -m pytest` |
