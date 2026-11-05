@@ -11,29 +11,33 @@ plan.
 
 > Status: being rebuilt one step at a time. Patient data in this repository is made up.
 
-## First version
+## An agent, not a pipeline
 
-1. The model reads the patient list (CSV), one row at a time: name, address, and the time window if any
-2. Find each address on the map
-3. Work out the travel time between home and every patient
-4. The model plans tomorrow's visits
-5. Check the plan; the model gets the problems back and revises it until it passes
+The model works in a loop. At each step it writes its thinking and picks one action, a tool;
+code runs the tool and gives it the result; the model picks the next action, until it submits
+a plan. Code never decides what happens next. It only runs the tools, which give facts and
+check plans but never choose or order patients, and stops a model that runs past 20 steps.
+
+Each step is JSON that must follow a schema (Ollama's structured outputs), with the action one
+of the tools' names:
+
+```json
+{"thinking": "...", "action": "submit_plan", "order": ["P3", "P1", "P2"]}
+```
+
+| Tool | What it does | Status |
+|---|---|---|
+| submit_plan | Hands in the plan and finishes | Done |
+| find_address | Finds where an address is on the map | Next |
+| travel_times | Minutes between places, for one travel mode | Planned |
+| check_plan | Checks a plan against the time windows, the visit limit and the working day, and totals its travel | Planned |
 
 ## The patient list
 
-A CSV with a header row and one row per patient. The columns can be named and written as the
-nurse likes, because the model reads each row: `Patient, Where, When` with `after 1pm` works
-as well as `name, address, earliest, latest` with `13:00`. For each row the model writes down:
-
-| Field | Meaning |
-|---|---|
-| name | The patient's name |
-| address | The street address, as written |
-| earliest | The visit may not start before this time, if the row says so |
-| latest | The visit must be over by this time, if the row says so |
-
-Code checks what the model wrote. A time it can't read, or a window that ends before it
-starts, goes back to the model with the mistake for another try (three tries in all).
+A CSV with a header row and one row per patient. The model gets the list as it is, with an id
+column in front (P1, P2, ...) so it can name each patient exactly, and reads it itself: the
+columns can be named and written as the nurse likes, e.g. `Patient, Where, When` with
+`after 1pm`. Each patient needs a name, an address, and optionally a time window.
 
 See [examples/patients.csv](examples/patients.csv). [examples/18th_avenue.csv](examples/18th_avenue.csv)
 has ten patients around 18th Avenue in Brooklyn: from a home at 6302 18th Ave, five are within a
@@ -46,5 +50,5 @@ Run from the project root, in the project's Python environment (`.venv`). The mo
 
 | What | Command |
 |---|---|
-| Show how the model reads a patient list | `.venv/Scripts/python -m homecare.patients examples/patients.csv` |
+| Plan tomorrow, showing every step | `.venv/Scripts/python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"` |
 | Run the tests | `.venv/Scripts/python -m pytest` |

@@ -9,6 +9,9 @@ import urllib.request
 
 OLLAMA = "http://localhost:11434/api/chat"
 MODEL = "llama3.1:8b"
+# Room for the whole conversation: the agent's every step and every tool result. Ollama's own
+# default is a few thousand tokens, and it silently drops whatever doesn't fit.
+CONTEXT_TOKENS = 16384
 
 
 class CutOff(ValueError):
@@ -25,7 +28,7 @@ def ask(messages: list[dict], schema: dict, max_tokens: int = 500) -> dict:
         "messages": messages,
         "format": schema,
         "stream": False,
-        "options": {"temperature": 0, "num_predict": max_tokens},
+        "options": {"temperature": 0, "num_predict": max_tokens, "num_ctx": CONTEXT_TOKENS},
     }
     request = urllib.request.Request(OLLAMA, json.dumps(body).encode(), {"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=300) as response:
