@@ -6,9 +6,11 @@ goes on until the model submits a plan, or runs out of steps. Code never decides
 next: it only runs the tools, which give facts and check plans but never choose or order
 patients.
 
-Each step is JSON that must follow a schema (Ollama's structured outputs): the action is one of
-the tools' names, so the model can't call a tool that doesn't exist or write an answer that
-can't be read.
+Each step is JSON that must follow a schema (Ollama's structured outputs). The schema has one
+shape per tool (anyOf): thinking, the tool's name as the action, then that tool's own fields
+only. So the model can't call a tool that doesn't exist, fill in another tool's fields, or
+write an answer that can't be read. With every tool's fields in one shape, the model put
+travel_times' places into find_address's field and left its own empty.
 
 Run it (Ollama must be running):
     python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"
@@ -20,7 +22,7 @@ import dataclasses
 import io
 import json
 
-from homecare import addresses, llm
+from homecare import addresses, llm, travel
 
 MAX_STEPS = 20  # steps the model may take before it is stopped
 MAX_STEP_TOKENS = 600  # the longest one step's answer may be
@@ -36,7 +38,7 @@ patient list gives it.
 You work step by step. At each step, write your thinking, then choose one action:
 {actions}
 
-Answer every step in JSON. Fill in only the fields your action uses; leave the others empty."""
+Answer every step in JSON."""
 
 
 @dataclasses.dataclass
@@ -79,39 +81,51 @@ def numbered(csv_text: str) -> tuple[str, list[str]]:
 
 
 class Agent:
-    def __init__(self, request: Request, ask=llm.ask, log=print, find=addresses.find):
-        self.request, self.ask, self.log, self.find = request, ask, log, find
+    def __init__(self, request: Request, ask=llm.ask, log=print, find=addresses.find,
+                 minutes=travel.walking_minutes):
+        self.request, self.ask, self.log, self.find, self.minutes = request, ask, log, find, minutes
         self.patient_list, self.ids = numbered(request.csv_text)
         self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
         # Each tool: what the model is told it does, the fields it fills in, and the code that runs it.
+        # minItems keeps a list from being left empty: the model often wrote [] when unsure.
         self.tools = {
             "find_address": (
                 "find_address: find where addresses are on the map. Fill in places: for each, place (a "
                 "patient's id, or home) and address (as the list or the task writes it).",
-                {"places": {"type": "array", "maxItems": len(self.ids) + 1, "items": {
+                {"places": {"type": "array", "minItems": 1, "maxItems": len(self.ids) + 1, "items": {
                     "type": "object",
                     "properties": {"place": {"type": "string", "enum": [*self.ids, "home"]},
                                    "address": {"type": "string"}},
                     "required": ["place", "address"]}}},
                 self.find_address,
             ),
+            "travel_times": (
+                "travel_times: walking minutes between places whose addresses you found. Fill in between: "
+                "the places (patients' ids, or home).",
+                {"between": {"type": "array", "items": {"type": "string", "enum": [*self.ids, "home"]},
+                             "minItems": 2, "maxItems": len(self.ids) + 1}},
+                self.travel_times,
+            ),
             "submit_plan": (
                 "submit_plan: hand in your plan and finish. Fill in order: the patients' ids, in visiting order.",
                 {"order": {"type": "array", "items": {"type": "string", "enum": self.ids},
-                           "maxItems": len(self.ids)}},
+                           "minItems": 1, "maxItems": len(self.ids)}},
                 self.submit_plan,
             ),
         }
 
     def schema(self) -> dict:
-        """What every step must look like: thinking, an action, and every tool's fields."""
-        fields = {name: spec for _, tool_fields, _ in self.tools.values() for name, spec in tool_fields.items()}
-        return {
-            "type": "object",
-            "properties": {"thinking": {"type": "string"}, "action": {"type": "string", "enum": list(self.tools)},
-                           **fields},
-            "required": ["thinking", "action", *fields],
-        }
+        """What every step must look like: one shape per tool, with thinking, the tool's name, and its fields.
+
+        The model writes the fields in this order, so it thinks first, then picks the tool; once
+        the tool's name is written, only that tool's fields can follow."""
+        return {"anyOf": [
+            {"type": "object",
+             "properties": {"thinking": {"type": "string"}, "action": {"type": "string", "enum": [name]},
+                            **fields},
+             "required": ["thinking", "action", *fields]}
+            for name, (_, fields, _) in self.tools.items()
+        ]}
 
     def first_messages(self) -> list[dict]:
         actions = "\n".join(f"- {description}" for description, _, _ in self.tools.values())
@@ -130,7 +144,22 @@ class Agent:
                 lines.append(f"{item['place']}: found {place.display}")
             except addresses.AddressError as problem:
                 lines.append(f"{item['place']}: {problem}")
-        return "\n".join(lines) or "No addresses given.", False
+        return "\n".join(lines), False
+
+    def travel_times(self, answer: dict) -> tuple[str, bool]:
+        asked = list(dict.fromkeys(answer["between"]))  # each place once, in the order asked
+        known = [place for place in asked if place in self.found]
+        if len(known) < 2:
+            lines = ["Travel times need at least two places whose addresses were found."]
+        else:
+            minutes = self.minutes([self.found[place] for place in known])
+            lines = ["Walking minutes:"]
+            for i, start in enumerate(known):
+                legs = [f"{end} {'no route' if minutes[i][j] is None else minutes[i][j]}"
+                        for j, end in enumerate(known) if j != i]
+                lines.append(f"from {start}: {', '.join(legs)}")
+        lines += [f"{place}: address not found yet; use find_address first" for place in asked if place not in known]
+        return "\n".join(lines), False
 
     def submit_plan(self, answer: dict) -> tuple[str, bool]:
         self.order = answer["order"]
@@ -147,7 +176,8 @@ class Agent:
                 messages.append({"role": "user", "content": "Your answer was too long and was cut off. Answer again, shorter."})
                 continue
             action = answer["action"]
-            arguments = {name: answer[name] for name in self.tools[action][1]}
+            # Everything the model wrote besides its thinking and action, so the trace hides nothing.
+            arguments = {name: value for name, value in answer.items() if name not in ("thinking", "action")}
             result, done = self.tools[action][2](answer)
             steps.append(Step(answer["thinking"], action, arguments, result))
             shown_result = result.replace("\n", "\n       ")  # a result of several lines stays indented

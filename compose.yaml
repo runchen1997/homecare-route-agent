@@ -1,0 +1,11 @@
+# The road router (OSRM) for travel times, run in Docker: docker compose up -d
+# It serves the walking road network built in data/osrm/walking on http://localhost:5001.
+services:
+  osrm-walking:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    # mld: the routing algorithm the road network was built for. max-table-size: the most places
+    # one table of travel times may have.
+    command: osrm-routed --algorithm mld --max-table-size 500 /data/map.osrm
+    volumes: ["./data/osrm/walking:/data:ro"]
+    ports: ["5001:5000"]
+    restart: unless-stopped
