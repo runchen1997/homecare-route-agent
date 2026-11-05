@@ -28,8 +28,8 @@ of the tools' names:
 | Tool | What it does | Status |
 |---|---|---|
 | submit_plan | Hands in the plan and finishes | Done |
-| find_address | Finds where an address is on the map | Next |
-| travel_times | Minutes between places, for one travel mode | Planned |
+| find_address | Finds where addresses are on the map, for patients (by id) and home | Done |
+| travel_times | Minutes between places, for one travel mode | Next |
 | check_plan | Checks a plan against the time windows, the visit limit and the working day, and totals its travel | Planned |
 
 ## The patient list
@@ -42,6 +42,16 @@ columns can be named and written as the nurse likes, e.g. `Patient, Where, When`
 See [examples/patients.csv](examples/patients.csv). [examples/18th_avenue.csv](examples/18th_avenue.csv)
 has ten patients around 18th Avenue in Brooklyn: from a home at 6302 18th Ave, five are within a
 few blocks of each other, and the best day visits exactly those five.
+
+## Finding addresses
+
+find_address looks addresses up in an offline index of Brooklyn and Manhattan addresses,
+`data/addresses.db` (kept out of the repository; a SQLite table of house number, street,
+borough, zip, latitude and longitude). It reads short forms (`Ave`, `St`, `Pkwy`, `E` for East,
+...) and finds an address only if its house number and street match exactly: it never guesses.
+It tells the model when a street or house number isn't in the index, or when a street is in both
+boroughs and the address needs one. The model sees the address as found, not its latitude and
+longitude: how far apart places are is for travel_times to say.
 
 ## Commands
 

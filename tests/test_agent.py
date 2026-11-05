@@ -3,6 +3,7 @@
 import pytest
 
 from homecare import agent, llm
+from homecare.addresses import AddressError, Place
 from homecare.agent import Agent, Request, numbered
 
 CSV = "Patient,Where\nAna,1 A St\nBo,2 B St\n"
@@ -24,12 +25,26 @@ def scripted(*answers):
 
 
 def submit(order, thinking="done"):
-    return {"thinking": thinking, "action": "submit_plan", "order": order}
+    return {"thinking": thinking, "action": "submit_plan", "places": [], "order": order}
+
+
+def look_up(**places):
+    return {"thinking": "where are they?", "action": "find_address", "order": [],
+            "places": [{"place": place, "address": address} for place, address in places.items()]}
+
+
+def find(address):
+    """A stand-in for addresses.find that knows two addresses."""
+    known = {"1 A St": Place("1 A Street, Brooklyn 11201", 40.1, -73.1),
+             "9 Home St": Place("9 Home Street, Brooklyn 11209", 40.9, -73.9)}
+    if address not in known:
+        raise AddressError(f'not found: no street called "{address}"')
+    return known[address]
 
 
 def make(*answers):
     ask = scripted(*answers)
-    return Agent(Request(CSV, "9 Home St"), ask, log=lambda *_: None), ask
+    return Agent(Request(CSV, "9 Home St"), ask, log=lambda *_: None, find=find), ask
 
 
 def test_the_list_gets_an_id_column():
@@ -55,9 +70,20 @@ def test_the_model_sees_the_task_and_the_list_then_submits():
 
 def test_each_step_must_name_a_real_action_and_real_patients():
     schema = make()[0].schema()
-    assert schema["properties"]["action"]["enum"] == ["submit_plan"]
+    assert schema["properties"]["action"]["enum"] == ["find_address", "submit_plan"]
     assert schema["properties"]["order"]["items"]["enum"] == ["P1", "P2"]
-    assert schema["required"] == ["thinking", "action", "order"]
+    assert schema["properties"]["places"]["items"]["properties"]["place"]["enum"] == ["P1", "P2", "home"]
+    assert schema["required"] == ["thinking", "action", "places", "order"]
+
+
+def test_the_model_looks_up_addresses_and_sees_what_was_found():
+    a, ask = make(look_up(P1="1 A St", P2="2 B St", home="9 Home St"), submit(["P1"]))
+    result = a.run()
+    assert result.steps[0].result == ('P1: found 1 A Street, Brooklyn 11201\n'
+                                      'P2: not found: no street called "2 B St"\n'
+                                      'home: found 9 Home Street, Brooklyn 11209')
+    assert ask.asked[1][0][-1]["content"].startswith("Result of find_address: P1: found")
+    assert sorted(a.found) == ["P1", "home"]  # kept for working out travel times later
 
 
 def test_an_answer_cut_off_uses_up_a_step():

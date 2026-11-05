@@ -20,7 +20,7 @@ import dataclasses
 import io
 import json
 
-from homecare import llm
+from homecare import addresses, llm
 
 MAX_STEPS = 20  # steps the model may take before it is stopped
 MAX_STEP_TOKENS = 600  # the longest one step's answer may be
@@ -79,11 +79,22 @@ def numbered(csv_text: str) -> tuple[str, list[str]]:
 
 
 class Agent:
-    def __init__(self, request: Request, ask=llm.ask, log=print):
-        self.request, self.ask, self.log = request, ask, log
+    def __init__(self, request: Request, ask=llm.ask, log=print, find=addresses.find):
+        self.request, self.ask, self.log, self.find = request, ask, log, find
         self.patient_list, self.ids = numbered(request.csv_text)
+        self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
         # Each tool: what the model is told it does, the fields it fills in, and the code that runs it.
         self.tools = {
+            "find_address": (
+                "find_address: find where addresses are on the map. Fill in places: for each, place (a "
+                "patient's id, or home) and address (as the list or the task writes it).",
+                {"places": {"type": "array", "maxItems": len(self.ids) + 1, "items": {
+                    "type": "object",
+                    "properties": {"place": {"type": "string", "enum": [*self.ids, "home"]},
+                                   "address": {"type": "string"}},
+                    "required": ["place", "address"]}}},
+                self.find_address,
+            ),
             "submit_plan": (
                 "submit_plan: hand in your plan and finish. Fill in order: the patients' ids, in visiting order.",
                 {"order": {"type": "array", "items": {"type": "string", "enum": self.ids},
@@ -111,13 +122,23 @@ class Agent:
                 {"role": "user", "content": task}]
 
     # The tools. Each returns what the model is told, and whether the run is over.
+    def find_address(self, answer: dict) -> tuple[str, bool]:
+        lines = []
+        for item in answer["places"]:
+            try:
+                self.found[item["place"]] = place = self.find(item["address"])
+                lines.append(f"{item['place']}: found {place.display}")
+            except addresses.AddressError as problem:
+                lines.append(f"{item['place']}: {problem}")
+        return "\n".join(lines) or "No addresses given.", False
+
     def submit_plan(self, answer: dict) -> tuple[str, bool]:
         self.order = answer["order"]
         return "Plan received.", True
 
     def run(self) -> Result:
         messages, steps, schema = self.first_messages(), [], self.schema()
-        self.order = []
+        self.order, self.found = [], {}
         for number in range(1, MAX_STEPS + 1):
             try:
                 answer = self.ask(messages, schema, MAX_STEP_TOKENS)
@@ -129,7 +150,8 @@ class Agent:
             arguments = {name: answer[name] for name in self.tools[action][1]}
             result, done = self.tools[action][2](answer)
             steps.append(Step(answer["thinking"], action, arguments, result))
-            self.log(f"[{number}] {answer['thinking']}\n    -> {action} {json.dumps(arguments)}\n    <- {result}")
+            shown_result = result.replace("\n", "\n       ")  # a result of several lines stays indented
+            self.log(f"[{number}] {answer['thinking']}\n    -> {action} {json.dumps(arguments)}\n    <- {shown_result}")
             messages += [{"role": "assistant", "content": json.dumps(answer)},
                          {"role": "user", "content": f"Result of {action}: {result}"}]
             if done:
