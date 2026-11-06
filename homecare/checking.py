@@ -16,13 +16,22 @@ class Rules:
     max_visits: int = 5
     visit_minutes: int = 30
     window_slack_minutes: int = 10  # a visit may start this much before or after the patient's window
+    work_hours: float | None = None  # the longest working day, from leaving home to getting back; None: no limit
+    max_wait_minutes: int | None = 20  # the longest wait at a patient's door; None: no limit
 
     def describe(self) -> str:
         """The rules, as the model is told them."""
-        return (f"Tomorrow the nurse leaves home at {self.day_start} at the earliest and must be back by "
+        text = (f"Tomorrow the nurse leaves home at {self.day_start} at the earliest and must be back by "
                 f"{self.day_end}. At most {self.max_visits} visits. Each visit takes {self.visit_minutes} minutes. "
                 f"A visit may start up to {self.window_slack_minutes} minutes before the earliest or after the "
-                f"latest time in the patient's window; arriving earlier than that, the nurse waits.")
+                f"latest time in the patient's window; arriving earlier than that, the nurse waits. The nurse "
+                f"leaves home as late as the plan allows, so waits at home rather than at a door where possible.")
+        if self.work_hours is not None:
+            text += (f" The working day, from leaving home to getting back, is at most "
+                     f"{duration(round(self.work_hours * 60))}.")
+        if self.max_wait_minutes is not None:
+            text += f" At most {self.max_wait_minutes} minutes of waiting at any patient's door."
+        return text
 
 
 @dataclasses.dataclass
@@ -45,6 +54,11 @@ def minutes(clock_time: str) -> int:
 
 def clock(minutes_after_midnight: int) -> str:
     return f"{minutes_after_midnight // 60:02d}:{minutes_after_midnight % 60:02d}"
+
+
+def duration(total_minutes: int) -> str:
+    hours, rest = divmod(total_minutes, 60)
+    return f"{hours} h {rest} min" if hours else f"{rest} min"
 
 
 def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int | None], rules: Rules) -> Check:
@@ -79,19 +93,43 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
     problems += [f"There is no walking route for leg {i + 1} of the day." for i, leg in enumerate(legs) if leg is None]
     legs = [0 if leg is None else leg for leg in legs]  # a missing route is reported above, and counted as 0
 
-    # Leave home just in time for the first visit, but not before the day starts.
-    first_earliest = limits[order[0]][0] if order else None
-    leave = minutes(rules.day_start)
-    if first_earliest is not None:
-        leave = max(leave, first_earliest - slack - legs[0])
-    lines, now, walked, waited = [f"leave home {clock(leave)}"], leave, 0, 0
-    for patient, leg in zip(order, legs):
+    def day(leave: int) -> tuple[list[tuple[int, int]], int]:
+        """Each visit's arrival and start, leaving home at `leave`; and the time back home."""
+        visits, now = [], leave
+        for patient, leg in zip(order, legs):
+            earliest = limits[patient][0]
+            arrive = now + leg
+            start = arrive if earliest is None else max(arrive, earliest - slack)
+            visits.append((arrive, start))
+            now = start + rules.visit_minutes
+        return visits, now + legs[-1]
+
+    # Leave home as late as possible: waiting at home, not at a door. Leaving `shift` minutes after
+    # the day starts moves each visit's start by what is left of the shift after the waiting before
+    # it; so leave no later than lets every visit start within its window (or no later than it
+    # would anyway), and no later than the waiting in the whole day, or the nurse gets home later.
+    visits, _ = day(minutes(rules.day_start))
+    shift, waited_so_far = None, 0
+    for patient, (arrive, start) in zip(order, visits):
+        waited_so_far += start - arrive
+        latest = limits[patient][1]
+        if latest is not None:
+            room = max(latest + slack - start, 0) + waited_so_far
+            shift = room if shift is None else min(shift, room)
+    shift = waited_so_far if shift is None else min(shift, waited_so_far)
+    leave = minutes(rules.day_start) + shift
+    visits, back = day(leave)
+
+    lines, walked, waited = [f"leave home {clock(leave)}"], 0, 0
+    for patient, leg, (arrive, start) in zip(order, legs, visits):
         earliest, latest = limits[patient]
-        arrive = now + leg
-        start = arrive if earliest is None else max(arrive, earliest - slack)
         line = f"{patient}: walk {leg} min, arrive {clock(arrive)}"
         if start > arrive:
             line += f", wait {start - arrive} min"
+            if rules.max_wait_minutes is not None and start - arrive > rules.max_wait_minutes:
+                line += f" (longer than {rules.max_wait_minutes})"
+                problems.append(f"{patient}: waits {start - arrive} min at the door, more than the "
+                                f"{rules.max_wait_minutes} min allowed.")
         line += f", start {clock(start)}, finish {clock(start + rules.visit_minutes)}"
         if earliest is not None or latest is not None:
             shown = [clock(limit) if limit is not None else "" for limit in (earliest, latest)]
@@ -101,13 +139,16 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
             problems.append(f"{patient} starts {start - latest - slack} min after its latest start "
                             f"({clock(latest + slack)}).")
         lines.append(line)
-        walked, waited, now = walked + leg, waited + start - arrive, start + rules.visit_minutes
-    back = now + legs[-1]
+        walked, waited = walked + leg, waited + start - arrive
     walked += legs[-1]
     lines.append(f"walk {legs[-1]} min, back home {clock(back)}")
     if back > minutes(rules.day_end):
         problems.append(f"Back home at {clock(back)}, after {rules.day_end}.")
-    lines.append(f"Total: {len(order)} visit{'s' * (len(order) != 1)}, {walked} min walking, {waited} min waiting.")
+    if rules.work_hours is not None and back - leave > round(rules.work_hours * 60):
+        problems.append(f"The working day is {duration(back - leave)}, longer than "
+                        f"{duration(round(rules.work_hours * 60))}.")
+    lines.append(f"Total: {len(order)} visit{'s' * (len(order) != 1)}, {walked} min walking, {waited} min waiting, "
+                 f"working day {duration(back - leave)}.")
 
     header = "Plan check: OK." if not problems else f"Plan check: {len(problems)} problem{'s' * (len(problems) > 1)}."
     text = "\n".join([header, *lines, *(["Problems:", *(f"- {problem}" for problem in problems)] if problems else [])])

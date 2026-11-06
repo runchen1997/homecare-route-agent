@@ -24,8 +24,8 @@ def scripted(*answers):
     return ask
 
 
-def submit(order, thinking="done"):
-    return {"thinking": thinking, "action": "submit_plan", "order": order}
+def submit(order, thinking="done", reasons="the least walking"):
+    return {"thinking": thinking, "action": "submit_plan", "order": order, "reasons": reasons}
 
 
 def look_up(**places):
@@ -63,10 +63,16 @@ def make(*answers):
     return Agent(Request(CSV, "9 Home St"), ask, log=lambda *_: None, find=find, minutes=minutes), ask
 
 
-def test_the_list_gets_an_id_column():
-    text, ids = numbered("name,address\nAna,\"1 A St, Brooklyn\"\n\nBo,2 B St\n")
+def test_the_list_is_shown_one_patient_per_line_with_each_cell_named():
+    text, ids = numbered("name,address,earliest,latest\nAna,\"1 A St, Brooklyn\",,12:00\n\nBo,2 B St\n")
     assert ids == ["P1", "P2"]  # the empty line is skipped
-    assert text == "id,name,address\nP1,Ana,\"1 A St, Brooklyn\"\nP2,Bo,2 B St\n"
+    assert text == ("P1: name: Ana; address: 1 A St, Brooklyn; earliest: (empty); latest: 12:00\n"
+                    "P2: name: Bo; address: 2 B St; earliest: (empty); latest: (empty)\n")  # a short row too
+
+
+def test_cells_without_a_column_name_are_still_shown():
+    text, _ = numbered("name,\nAna,\"call\nfirst\",extra\n")
+    assert text == "P1: name: Ana; column 2: call first; column 3: extra\n"
 
 
 def test_a_list_with_no_patients_is_refused():
@@ -75,13 +81,14 @@ def test_a_list_with_no_patients_is_refused():
 
 
 def test_the_model_sees_the_task_and_the_list_then_submits():
-    a, ask = make(submit(["P2", "P1"]))
+    a, ask = make(submit(["P2", "P1"], reasons="P2 is on the way"))
     result = a.run()
     assert (result.order, result.ended, len(result.steps)) == (["P2", "P1"], "submitted", 1)
+    assert result.reasons == "P2 is on the way"
     messages, schema = ask.asked[0]
     assert "submit_plan: hand in your plan" in messages[0]["content"]
     assert "Home: 9 Home St" in messages[1]["content"]
-    assert "id,Patient,Where\nP1,Ana,1 A St\nP2,Bo,2 B St" in messages[1]["content"]
+    assert "P1: Patient: Ana; Where: 1 A St\nP2: Patient: Bo; Where: 2 B St" in messages[1]["content"]
 
 
 def test_each_tool_has_its_own_shape_with_only_its_own_fields():
@@ -89,7 +96,7 @@ def test_each_tool_has_its_own_shape_with_only_its_own_fields():
     assert list(shapes) == ["find_address", "travel_times", "best_plans", "check_plan", "submit_plan"]
     assert [shape["required"] for shape in shapes.values()] == [
         ["thinking", "action", "places"], ["thinking", "action", "between"], ["thinking", "action", "windows"],
-        ["thinking", "action", "order", "windows"], ["thinking", "action", "order"]]
+        ["thinking", "action", "order", "windows"], ["thinking", "action", "order", "reasons"]]
     assert shapes["best_plans"]["properties"]["windows"]["minItems"] == 2  # every patient on the list
     assert list(shapes["travel_times"]["properties"]) == ["thinking", "action", "between"]  # thinking comes first
 
@@ -107,7 +114,7 @@ def test_each_tool_names_only_real_patients_and_no_empty_lists():
 
 def test_the_trace_shows_everything_the_model_wrote():
     a, _ = make(submit(["P1"]))
-    assert a.run().steps[0].arguments == {"order": ["P1"]}
+    assert a.run().steps[0].arguments == {"order": ["P1"], "reasons": "the least walking"}
 
 
 def test_the_model_looks_up_addresses_and_sees_what_was_found():
@@ -155,7 +162,7 @@ def test_the_model_checks_its_plan_against_the_rules_it_was_told():
                                       "leave home 08:00\n"
                                       "P1: walk 8 min, arrive 08:08, start 08:08, finish 08:38 (window -08:00)\n"
                                       "walk 8 min, back home 08:46\n"
-                                      "Total: 1 visit, 16 min walking, 0 min waiting.")
+                                      "Total: 1 visit, 16 min walking, 0 min waiting, working day 46 min.")
     assert "Each visit takes 30 minutes." in ask.asked[0][0][1]["content"]
 
 
@@ -177,9 +184,9 @@ def test_the_model_gets_the_best_plans_and_the_windows_next_to_the_list():
     assert a.run().steps[1].result == (
         "Best plans with 2 visits (2 plans with 2 visits fit the rules):\n"
         "- least walking, least waiting, earliest home: P1 -> P2: walk 16 min, wait 0 min, leave 08:00, back 09:16\n"
-        "Windows you gave, next to each patient's line in the list (id,Patient,Where):\n"
-        "P1: latest 12:00 | P1,Ana,1 A St\n"
-        "P2: none | P2,Bo,2 B St\n"
+        "Windows you gave, next to each patient's line in the list:\n"
+        "P1: latest 12:00 | list: P1: Patient: Ana; Where: 1 A St\n"
+        "P2: none | list: P2: Patient: Bo; Where: 2 B St\n"
         "If a window is wrong, call best_plans again with it fixed.")
 
 

@@ -51,10 +51,20 @@ empty list when unsure.
 
 ## The patient list
 
-A CSV with a header row and one row per patient. The model gets the list as it is, with an id
-column in front (P1, P2, ...) so it can name each patient exactly, and reads it itself: the
-columns can be named and written as the nurse likes, e.g. `Patient, Where, When` with
-`after 1pm`. Each patient needs a name, an address, and optionally a time window.
+A CSV with a header row and one row per patient. The model reads it itself: the columns can be
+named and written as the nurse likes, e.g. `Patient, Where, When` with `after 1pm`. Each patient
+needs a name, an address, and optionally a time window.
+
+The model gets one line per patient, with an id (P1, P2, ...) so it can name each patient
+exactly, and each cell under its column's name, an empty one written as `(empty)`:
+
+```
+P2: name: Victor Huang; address: 1703 65th St, Brooklyn; earliest: (empty); latest: 12:00
+```
+
+Nothing is read for it; this only saves it counting commas. Given the CSV as it is, the model
+often read `...,,12:00` (latest 12:00) as earliest 12:00, and whether it did changed with any
+small change elsewhere in the prompt.
 
 See [examples/patients.csv](examples/patients.csv). [examples/18th_avenue.csv](examples/18th_avenue.csv)
 has ten patients around 18th Avenue in Brooklyn: from a home at 6302 18th Ave, five are within a
@@ -91,10 +101,20 @@ The rules are the user's, with defaults, and the model is told the same rules ch
 | Most visits in a day | 5 | `--max-visits` |
 | Length of a visit | 30 minutes | `--visit-minutes` |
 | A visit may start this much before or after the patient's window | 10 minutes | `--window-slack` |
+| Longest working day, from leaving home to getting back | no limit | `--work-hours` |
+| Longest wait at a patient's door | 20 minutes | `--max-wait` |
 
-Arriving earlier than a window allows, the nurse waits; that is not a problem, but the waiting
-is reported. Starting later than the window allows is a problem, as are too many visits, a
-patient in the plan twice, and getting home too late.
+The nurse sets how much work the day holds: how many visits (`--max-visits`), or how long the
+day may be (`--day-start` and `--day-end` for a time of day, `--work-hours` for a length), or
+both. Within that, the plan has as many visits as fit, then the least travel.
+
+The nurse leaves home as late as the plan allows: as late as lets every visit start within its
+window, without getting home later. So the nurse waits at home rather than at a door, and the
+working day is no longer than the plan needs. Waiting that can't be avoided (between a visit
+that must be early and one that can't start until later) is reported, and counts toward the
+working day; a wait longer than `--max-wait` at any door is a problem. Starting later than the
+window allows is a problem, as are too many visits, a patient in the plan twice, getting home too
+late, and too long a day.
 
 check_plan takes the plan's order and each patient's window as the model read it from the list
 (so the model still reads the list itself, and a misread window shows in the check). It walks
@@ -102,29 +122,30 @@ through the day and answers with the times and the problems; it never suggests a
 
 ```
 Plan check: 1 problem.
-leave home 08:00
-P1: walk 5 min, arrive 08:05, start 08:05, finish 08:35
-P3: walk 5 min, arrive 08:40, wait 250 min, start 12:50, finish 13:20 (window 13:00-)
+leave home 12:10
+P1: walk 5 min, arrive 12:15, start 12:15, finish 12:45
+P3: walk 5 min, arrive 12:50, start 12:50, finish 13:20 (window 13:00-)
 P2: walk 5 min, arrive 13:25, start 13:25, finish 13:55 (window -12:00): LATE, must start by 12:10
 walk 5 min, back home 14:00
-Total: 3 visits, 20 min walking, 250 min waiting.
+Total: 3 visits, 20 min walking, 0 min waiting, working day 1 h 50 min.
 Problems:
 - P2 starts 75 min after its latest start (12:10).
 ```
 
-submit_plan accepts any plan: checking it before handing it in is the model's job.
+submit_plan accepts any plan: checking it before handing it in is the model's job. With the
+plan, the model writes its reasons for the nurse, in a sentence or two; they are printed at the end.
 
 ## Best plans
 
 best_plans takes each patient's window as the model read it from the list, tries every order of
 up to the most visits allowed, checks each one the way check_plan does, and keeps the plans with
 the most visits that fit the rules. It gives the best of those by three measures, because which
-is best depends on the nurse: the least walking can mean hours of waiting mid-day.
+is best depends on the nurse: the least walking can mean getting home hours later.
 
 ```
 Best plans with 5 visits (5178 plans with 5 visits fit the rules):
-- least walking: P2 -> P1 -> P3 -> P6 -> P7: walk 67 min, wait 199 min, leave 08:00, back 14:56
-- least waiting, earliest home: P5 -> P1 -> P2 -> P6 -> P7: walk 77 min, wait 0 min, leave 08:00, back 11:47
+- least walking, least waiting: P2 -> P1 -> P3 -> P6 -> P7: walk 67 min, wait 0 min, leave 11:19, back 14:56
+- earliest home: P5 -> P1 -> P2 -> P6 -> P7: walk 77 min, wait 0 min, leave 08:00, back 11:47
 Windows you gave, next to each patient's line in the list (id,name,address,earliest,latest):
 P1: none | P1,Elena Russo,"6302 18th Ave, Brooklyn",,
 P2: latest 12:00 | P2,Victor Huang,"1703 65th St, Brooklyn",,12:00
@@ -146,4 +167,5 @@ Docker: start Docker, then the router.
 |---|---|
 | Start the road router | `docker compose up -d` |
 | Plan tomorrow, showing every step | `.venv/Scripts/python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"` |
+| The same, for a working day of at most 3.5 hours | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --work-hours 3.5` |
 | Run the tests | `.venv/Scripts/python -m pytest` |

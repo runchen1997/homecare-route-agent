@@ -66,27 +66,31 @@ class Result:
     order: list[str]  # patient ids, in visiting order; empty if no plan was submitted
     steps: list[Step]
     ended: str  # why the run ended: "submitted", or "step limit"
+    reasons: str = ""  # why this plan, for the nurse, as the model wrote it
 
 
 def numbered(csv_text: str) -> tuple[str, list[str]]:
-    """The patient list with an id column in front (P1, P2, ...), and the ids.
+    """The patient list as the model sees it, and the ids: one line per patient, with an id (P1,
+    P2, ...) and each cell under its column's name, e.g. "P1: name: Ana; earliest: (empty)".
 
-    The ids let the model name each patient exactly, whatever the list's own columns are."""
+    The ids let the model name each patient exactly, whatever the list's own columns are. The
+    model still reads every cell itself; naming each one, and writing an empty one as (empty),
+    only saves it counting commas: given the CSV as it is, it read "...,,12:00" (latest 12:00)
+    as earliest 12:00, and a small change anywhere in the prompt could make it do so."""
     table = [row for row in csv.reader(io.StringIO(csv_text.strip())) if any(cell.strip() for cell in row)]
     if len(table) < 2:
         raise ValueError("the patient list needs a header row and at least one patient")
     ids = [f"P{number}" for number in range(1, len(table))]
-    out = io.StringIO()
-    writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(["id", *table[0]])
-    writer.writerows([patient_id, *row] for patient_id, row in zip(ids, table[1:]))
-    return out.getvalue(), ids
-
-
-def csv_line(row: list[str]) -> str:
-    out = io.StringIO()
-    csv.writer(out, lineterminator="").writerow(row)
-    return out.getvalue()
+    header = table[0]
+    lines = []
+    for patient_id, row in zip(ids, table[1:]):
+        cells = []
+        for i in range(max(len(header), len(row))):
+            name = header[i].strip() if i < len(header) and header[i].strip() else f"column {i + 1}"
+            value = " ".join(row[i].split()) if i < len(row) else ""  # one line, whatever the cell holds
+            cells.append(f"{name}: {value or '(empty)'}")
+        lines.append(f"{patient_id}: {'; '.join(cells)}")
+    return "\n".join(lines) + "\n", ids
 
 
 def shown_window(earliest: str, latest: str) -> str:
@@ -102,9 +106,7 @@ class Agent:
                  minutes=travel.walking_minutes):
         self.request, self.ask, self.log, self.find, self.minutes = request, ask, log, find, minutes
         self.patient_list, self.ids = numbered(request.csv_text)
-        # Each line of the list, to show next to the window the model read from it.
-        table = list(csv.reader(io.StringIO(self.patient_list)))
-        self.header, self.rows = csv_line(table[0]), {row[0]: csv_line(row) for row in table[1:]}
+        self.rows = dict(zip(self.ids, self.patient_list.splitlines()))  # to show next to the windows read from them
         self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
         # Each tool: what the model is told it does, the fields it fills in, and the code that runs it.
         # minItems keeps a list from being left empty: the model often wrote [] when unsure.
@@ -146,9 +148,11 @@ class Agent:
                 self.check_plan,
             ),
             "submit_plan": (
-                "submit_plan: hand in your plan and finish. Fill in order: the patients' ids, in visiting order.",
+                "submit_plan: hand in your plan and finish. Fill in order: the patients' ids, in visiting order; "
+                "and reasons: for the nurse, in a sentence or two, why this plan.",
                 {"order": {"type": "array", "items": {"type": "string", "enum": self.ids},
-                           "minItems": 1, "maxItems": len(self.ids)}},
+                           "minItems": 1, "maxItems": len(self.ids)},
+                 "reasons": {"type": "string"}},
                 self.submit_plan,
             ),
         }
@@ -225,8 +229,8 @@ class Agent:
         except ValueError as problem:
             return str(problem), False
         # The windows the plans were worked out with, next to the list's own lines, so a misread shows.
-        lines = [solving.describe(found), f"Windows you gave, next to each patient's line in the list ({self.header}):"]
-        lines += [f"{p}: {shown_window(*windows[p])} | {self.rows[p]}" for p in self.ids]
+        lines = [solving.describe(found), "Windows you gave, next to each patient's line in the list:"]
+        lines += [f"{p}: {shown_window(*windows[p])} | list: {self.rows[p]}" for p in self.ids]
         lines.append("If a window is wrong, call best_plans again with it fixed.")
         return "\n".join(lines), False
 
@@ -243,12 +247,12 @@ class Agent:
         return checking.check(order, windows, legs, self.request.rules).text, False
 
     def submit_plan(self, answer: dict) -> tuple[str, bool]:
-        self.order = answer["order"]
+        self.order, self.reasons = answer["order"], answer["reasons"]
         return "Plan received.", True
 
     def run(self) -> Result:
         messages, steps, schema = self.first_messages(), [], self.schema()
-        self.order, self.found = [], {}
+        self.order, self.reasons, self.found = [], "", {}
         for number in range(1, MAX_STEPS + 1):
             try:
                 answer = self.ask(messages, schema, MAX_STEP_TOKENS)
@@ -266,7 +270,7 @@ class Agent:
             messages += [{"role": "assistant", "content": json.dumps(answer)},
                          {"role": "user", "content": f"Result of {action}: {result}"}]
             if done:
-                return Result(self.order, steps, "submitted")
+                return Result(self.order, steps, "submitted", self.reasons)
         return Result([], steps, "step limit")
 
 
@@ -281,12 +285,20 @@ def main() -> None:
     parser.add_argument("--visit-minutes", type=int, default=default.visit_minutes, help="how long each visit takes")
     parser.add_argument("--window-slack", type=int, default=default.window_slack_minutes,
                         help="minutes a visit may start before or after the patient's window")
+    parser.add_argument("--work-hours", type=float, default=default.work_hours,
+                        help="the longest working day, from leaving home to getting back, e.g. 4 or 5.5")
+    parser.add_argument("--max-wait", type=int, default=default.max_wait_minutes,
+                        help="the longest wait at a patient's door, in minutes")
     args = parser.parse_args()
-    rules = checking.Rules(args.day_start, args.day_end, args.max_visits, args.visit_minutes, args.window_slack)
+    rules = checking.Rules(day_start=args.day_start, day_end=args.day_end, max_visits=args.max_visits,
+                           visit_minutes=args.visit_minutes, window_slack_minutes=args.window_slack,
+                           work_hours=args.work_hours, max_wait_minutes=args.max_wait)
     with open(args.csv, encoding="utf-8") as file:
         request = Request(file.read(), args.home, rules)
     result = Agent(request).run()
     print(f"\n{result.ended} after {len(result.steps)} steps: {' -> '.join(result.order) or 'no plan'}")
+    if result.reasons:
+        print(f"Why: {result.reasons}")
 
 
 if __name__ == "__main__":
