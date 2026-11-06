@@ -24,7 +24,7 @@ def scripted(*answers):
     return ask
 
 
-def submit(order, thinking="done", reasons="the least walking"):
+def submit(order, thinking="done", reasons="the least travel"):
     return {"thinking": thinking, "action": "submit_plan", "order": order, "reasons": reasons}
 
 
@@ -114,7 +114,7 @@ def test_each_tool_names_only_real_patients_and_no_empty_lists():
 
 def test_the_trace_shows_everything_the_model_wrote():
     a, _ = make(submit(["P1"]))
-    assert a.run().steps[0].arguments == {"order": ["P1"], "reasons": "the least walking"}
+    assert a.run().steps[0].arguments == {"order": ["P1"], "reasons": "the least travel"}
 
 
 def test_the_model_looks_up_addresses_and_sees_what_was_found():
@@ -129,7 +129,7 @@ def test_the_model_looks_up_addresses_and_sees_what_was_found():
 
 def test_travel_times_are_given_from_each_place():
     a, _ = make(look_up(P1="1 A St", home="9 Home St"), times("home", "P1", "home"), submit(["P1"]))
-    assert a.run().steps[1].result == ("Walking minutes:\n"
+    assert a.run().steps[1].result == ("Travel minutes (walking):\n"
                                        "from home: P1 8\n"
                                        "from P1: home 8")
 
@@ -160,9 +160,9 @@ def test_the_model_checks_its_plan_against_the_rules_it_was_told():
     # Home and P1 are 8 minutes apart in the stand-in, so P1 starts 08:08: within 10 minutes of 08:00.
     assert result.steps[1].result == ("Plan check: OK.\n"
                                       "leave home 08:00\n"
-                                      "P1: walk 8 min, arrive 08:08, start 08:08, finish 08:38 (window -08:00)\n"
-                                      "walk 8 min, back home 08:46\n"
-                                      "Total: 1 visit, 16 min walking, 0 min waiting, working day 46 min.")
+                                      "P1: travel 8 min, arrive 08:08, start 08:08, finish 08:38 (window -08:00)\n"
+                                      "travel 8 min, back home 08:46\n"
+                                      "Total: 1 visit, 16 min travel, 0 min waiting, working day 46 min.")
     assert "Each visit takes 30 minutes." in ask.asked[0][0][1]["content"]
 
 
@@ -183,7 +183,7 @@ def test_the_model_gets_the_best_plans_and_the_windows_next_to_the_list():
     # In the stand-in, home is 8 minutes from P1 and 7 from P2, which are 1 minute apart.
     assert a.run().steps[1].result == (
         "Best plans with 2 visits (2 plans with 2 visits fit the rules):\n"
-        "- least walking, least waiting, earliest home: P1 -> P2: walk 16 min, wait 0 min, leave 08:00, back 09:16\n"
+        "- least travel, least waiting, earliest home: P1 -> P2: travel 16 min, wait 0 min, leave 08:00, back 09:16\n"
         "Windows you gave, next to each patient's line in the list:\n"
         "P1: latest 12:00 | list: P1: Patient: Ana; Where: 1 A St\n"
         "P2: none | list: P2: Patient: Bo; Where: 2 B St\n"
@@ -198,3 +198,13 @@ def test_best_plans_need_every_address_and_every_window():
     assert steps[2].result == ("Give a window for every patient on the list; missing: P2. "
                                "Leave earliest and latest empty where the list gives none.")
     assert steps[3].result == 'P1: "1pm" is not a time written as HH:MM.'
+
+
+def test_the_nurse_travels_the_way_the_request_says(monkeypatch):
+    modes = []
+    monkeypatch.setattr(agent.travel, "travel_minutes", lambda places, mode: modes.append(mode) or minutes(places))
+    ask = scripted(look_up(P1="1 A St", home="9 Home St"), times("home", "P1"), submit(["P1"]))
+    result = Agent(Request(CSV, "9 Home St", mode="driving"), ask, log=lambda *_: None, find=find).run()
+    assert "The nurse travels by car." in ask.asked[0][0][1]["content"]
+    assert modes == ["driving"]
+    assert result.steps[1].result.startswith("Travel minutes (driving):")

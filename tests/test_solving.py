@@ -17,11 +17,11 @@ def test_one_plan_best_by_every_measure_is_listed_once():
     found = best_plans(["P1", "P2", "P3"], {}, minutes, TWO_VISITS)
     assert (found.visits, found.fitting) == (2, 6)
     assert describe(found) == ("Best plans with 2 visits (6 plans with 2 visits fit the rules):\n"
-                               "- least walking, least waiting, earliest home: P1 -> P2: "
-                               "walk 4 min, wait 0 min, leave 08:00, back 09:04")
+                               "- least travel, least waiting, earliest home: P1 -> P2: "
+                               "travel 4 min, wait 0 min, leave 08:00, back 09:04")
 
 
-def test_the_least_walking_and_the_earliest_home_can_be_different_plans():
+def test_the_least_travel_and_the_earliest_home_can_be_different_plans():
     # P1 can't start before 11:50, P2 not after 08:10. P2 and P3 are 10 minutes apart; all else 1.
     minutes = [[0, 1, 1, 1],
                [1, 0, 1, 1],
@@ -31,9 +31,9 @@ def test_the_least_walking_and_the_earliest_home_can_be_different_plans():
     # Not P1 or P3 before P2: it would be late. Not P2 then P1: a 189-minute wait at P1's door.
     assert found.fitting == 3
     assert [(plan.measures, plan.order) for plan in found.best] == [
-        (["least walking", "least waiting"], ["P3", "P1"]),  # walk 3, leave late, no waiting, back 12:21
+        (["least travel", "least waiting"], ["P3", "P1"]),  # walk 3, leave late, no waiting, back 12:21
         (["earliest home"], ["P2", "P3"])]  # walk 12, leave 08:00, back 09:12
-    assert (found.best[1].check.walking, found.best[1].check.back) == (12, 9 * 60 + 12)
+    assert (found.best[1].check.travel, found.best[1].check.back) == (12, 9 * 60 + 12)
 
 
 def test_fewer_visits_when_no_plan_fits_them_all():

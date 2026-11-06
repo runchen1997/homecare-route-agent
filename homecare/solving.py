@@ -3,7 +3,7 @@
 This is the solver in the hybrid design: it works out orders, which a small model does badly,
 and the model chooses among the plans it gives, by what the nurse prefers, and explains why.
 It gives a few plans, each best by a different measure, rather than one, because which is best
-depends on the nurse: the least walking can mean hours of waiting in the middle of the day.
+depends on the nurse: the least travel can mean getting home hours later.
 
 It tries every order of up to the most visits allowed, checks each with checking.check, and
 keeps the most visits that any plan manages. That is exact, and fast enough for a nurse's list:
@@ -19,9 +19,9 @@ MAX_PATIENTS = 12  # more than this, and trying every plan would take too long
 
 # Each measure: what to make smallest first, then the others to break ties.
 MEASURES = {
-    "least walking": lambda check: (check.walking, check.waiting, check.back),
-    "least waiting": lambda check: (check.waiting, check.walking, check.back),
-    "earliest home": lambda check: (check.back, check.walking, check.waiting),
+    "least travel": lambda check: (check.travel, check.waiting, check.back),
+    "least waiting": lambda check: (check.waiting, check.travel, check.back),
+    "earliest home": lambda check: (check.back, check.travel, check.waiting),
 }
 
 
@@ -45,7 +45,7 @@ def best_plans(patients: list[str], windows: dict[str, tuple[str, str]], minutes
     """The best plans with as many visits as possible.
 
     windows: each patient's (earliest, latest), "" for none; a patient left out has none.
-    minutes: walking minutes between the places home, *patients, in that order (None where
+    minutes: travel minutes between the places home, *patients, in that order (None where
     there is no route). Raises ValueError for a list that is too long, or a time that isn't HH:MM."""
     windows = {patient: windows.get(patient, ("", "")) for patient in patients}
     if len(patients) > MAX_PATIENTS:
@@ -88,6 +88,6 @@ def describe(found: Found) -> str:
     lines = [head]
     for plan in found.best:
         c = plan.check
-        lines.append(f"- {', '.join(plan.measures)}: {' -> '.join(plan.order)}: walk {c.walking} min, "
+        lines.append(f"- {', '.join(plan.measures)}: {' -> '.join(plan.order)}: travel {c.travel} min, "
                      f"wait {c.waiting} min, leave {checking.clock(c.leave)}, back {checking.clock(c.back)}")
     return "\n".join(lines)

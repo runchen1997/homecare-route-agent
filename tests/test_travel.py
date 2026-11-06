@@ -28,7 +28,7 @@ def answer_with(monkeypatch, reply=None, problem=None):
 
 def test_seconds_become_whole_minutes(monkeypatch):
     asked = answer_with(monkeypatch, {"code": "Ok", "durations": [[0, 389.6], [410.2, None]]})
-    assert travel.walking_minutes(PLACES) == [[0, 6], [7, None]]  # None: no route
+    assert travel.travel_minutes(PLACES) == [[0, 6], [7, None]]  # None: no route
     # Longitude comes first, and one request asks for every pair.
     assert asked == ["http://localhost:5001/table/v1/foot/-73.98,40.62;-73.99,40.61?annotations=duration"]
 
@@ -37,10 +37,18 @@ def test_a_refused_request_says_why(monkeypatch):
     body = io.BytesIO(b'{"code": "TooBig", "message": "Too many table coordinates"}')
     answer_with(monkeypatch, problem=urllib.error.HTTPError("url", 400, "Bad Request", {}, body))
     with pytest.raises(ValueError, match="Too many table coordinates"):
-        travel.walking_minutes(PLACES)
+        travel.travel_minutes(PLACES)
 
 
 def test_a_router_that_is_not_running(monkeypatch):
     answer_with(monkeypatch, problem=urllib.error.URLError("connection refused"))
     with pytest.raises(ConnectionError, match="docker compose up -d"):
-        travel.walking_minutes(PLACES)
+        travel.travel_minutes(PLACES)
+
+
+def test_each_way_of_travelling_has_its_own_router(monkeypatch):
+    asked = answer_with(monkeypatch, {"code": "Ok", "durations": [[0, 60], [60, 0]]})
+    assert travel.travel_minutes(PLACES, "driving") == [[0, 1], [1, 0]]
+    assert asked[0].startswith("http://localhost:5000/table/v1/car/")
+    with pytest.raises(ValueError, match='no way of travelling called "flying"; there are walking, driving'):
+        travel.travel_minutes(PLACES, "flying")

@@ -46,11 +46,15 @@ You work step by step. At each step, write your thinking, then choose one action
 Answer every step in JSON."""
 
 
+TRAVELS = {"walking": "on foot", "driving": "by car"}  # how the task says the nurse travels, by mode
+
+
 @dataclasses.dataclass
 class Request:
     csv_text: str  # the patient list, as the nurse wrote it
     home: str  # the nurse's home address, where the day starts and ends
     rules: checking.Rules = dataclasses.field(default_factory=checking.Rules)  # the user's, with defaults
+    mode: str = "walking"  # how the nurse gets around: one of travel.MODES
 
 
 @dataclasses.dataclass
@@ -103,8 +107,10 @@ def shown_window(earliest: str, latest: str) -> str:
 
 class Agent:
     def __init__(self, request: Request, ask=llm.ask, log=print, find=addresses.find,
-                 minutes=travel.walking_minutes):
-        self.request, self.ask, self.log, self.find, self.minutes = request, ask, log, find, minutes
+                 minutes=None):
+        self.request, self.ask, self.log, self.find = request, ask, log, find
+        # Travel minutes between places, the way the nurse travels.
+        self.minutes = minutes or (lambda places: travel.travel_minutes(places, request.mode))
         self.patient_list, self.ids = numbered(request.csv_text)
         self.rows = dict(zip(self.ids, self.patient_list.splitlines()))  # to show next to the windows read from them
         self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
@@ -122,7 +128,8 @@ class Agent:
                 self.find_address,
             ),
             "travel_times": (
-                "travel_times: walking minutes between places whose addresses you found. Fill in between: "
+                "travel_times: travel minutes, the way the nurse travels, between places whose addresses you found. "
+                "Fill in between: "
                 "all the places you want times for, in one list (patients' ids, and home), e.g. home and every "
                 "patient; you get the minutes from each place to each of the others.",
                 {"between": {"type": "array", "items": {"type": "string", "enum": [*self.ids, "home"]},
@@ -131,7 +138,7 @@ class Agent:
             ),
             "best_plans": (
                 "best_plans: the best plans by the rules, worked out by trying every plan: the one with the least "
-                "walking, the one with the least waiting, and the one home earliest, each with as many visits as "
+                "travel, the one with the least waiting, and the one home earliest, each with as many visits as "
                 "possible. Fill in windows: for every patient on the list, the time window the list gives, earliest "
                 "and latest as HH:MM, empty if the list gives none.",
                 {"windows": self.windows_field(minimum=len(self.ids))},
@@ -181,7 +188,8 @@ class Agent:
     def first_messages(self) -> list[dict]:
         actions = "\n".join(f"- {description}" for description, _, _ in self.tools.values())
         r = self.request
-        task = f"{r.rules.describe()} Home: {r.home}.\n\nPatient list:\n{self.patient_list}"
+        task = (f"{r.rules.describe()} The nurse travels {TRAVELS[r.mode]}. Home: {r.home}.\n\n"
+                f"Patient list:\n{self.patient_list}")
         return [{"role": "system", "content": SYSTEM_PROMPT.format(actions=actions)},
                 {"role": "user", "content": task}]
 
@@ -206,7 +214,7 @@ class Agent:
         if len(asked) < 2:
             return "Travel times need at least two different places.", False
         minutes = self.minutes([self.found[place] for place in asked])
-        lines = ["Walking minutes:"]
+        lines = [f"Travel minutes ({self.request.mode}):"]
         for i, start in enumerate(asked):
             legs = [f"{end} {'no route' if minutes[i][j] is None else minutes[i][j]}"
                     for j, end in enumerate(asked) if j != i]
@@ -278,6 +286,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("csv", help="the patient list")
     parser.add_argument("--home", required=True, help="the nurse's home address")
+    parser.add_argument("--mode", choices=list(travel.MODES), default="walking", help="how the nurse gets around")
     default = checking.Rules()
     parser.add_argument("--day-start", default=default.day_start, help="leave home at this time at the earliest")
     parser.add_argument("--day-end", default=default.day_end, help="be back home by this time")
@@ -294,7 +303,7 @@ def main() -> None:
                            visit_minutes=args.visit_minutes, window_slack_minutes=args.window_slack,
                            work_hours=args.work_hours, max_wait_minutes=args.max_wait)
     with open(args.csv, encoding="utf-8") as file:
-        request = Request(file.read(), args.home, rules)
+        request = Request(file.read(), args.home, rules, args.mode)
     result = Agent(request).run()
     print(f"\n{result.ended} after {len(result.steps)} steps: {' -> '.join(result.order) or 'no plan'}")
     if result.reasons:

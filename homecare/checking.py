@@ -38,7 +38,7 @@ class Rules:
 class Check:
     text: str  # the day, step by step, and the problems: what the model is told
     problems: list[str]
-    walking: int  # minutes, the whole day
+    travel: int  # minutes travelling, the whole day
     waiting: int
     leave: int  # leaving home and getting back, in minutes after midnight
     back: int
@@ -65,7 +65,7 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
     """Walk through the day: home, the patients in `order`, home.
 
     windows: each patient's (earliest, latest) as the model read them from the list, "" for none.
-    legs: walking minutes for each leg, home -> first patient, ..., last patient -> home; None if
+    legs: travel minutes for each leg, home -> first patient, ..., last patient -> home; None if
     there is no route."""
     problems = []
     for patient in dict.fromkeys(order):
@@ -90,7 +90,7 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
         limits[patient] = tuple(limit)
 
     slack = rules.window_slack_minutes
-    problems += [f"There is no walking route for leg {i + 1} of the day." for i, leg in enumerate(legs) if leg is None]
+    problems += [f"There is no route for leg {i + 1} of the day." for i, leg in enumerate(legs) if leg is None]
     legs = [0 if leg is None else leg for leg in legs]  # a missing route is reported above, and counted as 0
 
     def day(leave: int) -> tuple[list[tuple[int, int]], int]:
@@ -120,10 +120,10 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
     leave = minutes(rules.day_start) + shift
     visits, back = day(leave)
 
-    lines, walked, waited = [f"leave home {clock(leave)}"], 0, 0
+    lines, travelled, waited = [f"leave home {clock(leave)}"], 0, 0
     for patient, leg, (arrive, start) in zip(order, legs, visits):
         earliest, latest = limits[patient]
-        line = f"{patient}: walk {leg} min, arrive {clock(arrive)}"
+        line = f"{patient}: travel {leg} min, arrive {clock(arrive)}"
         if start > arrive:
             line += f", wait {start - arrive} min"
             if rules.max_wait_minutes is not None and start - arrive > rules.max_wait_minutes:
@@ -139,17 +139,17 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
             problems.append(f"{patient} starts {start - latest - slack} min after its latest start "
                             f"({clock(latest + slack)}).")
         lines.append(line)
-        walked, waited = walked + leg, waited + start - arrive
-    walked += legs[-1]
-    lines.append(f"walk {legs[-1]} min, back home {clock(back)}")
+        travelled, waited = travelled + leg, waited + start - arrive
+    travelled += legs[-1]
+    lines.append(f"travel {legs[-1]} min, back home {clock(back)}")
     if back > minutes(rules.day_end):
         problems.append(f"Back home at {clock(back)}, after {rules.day_end}.")
     if rules.work_hours is not None and back - leave > round(rules.work_hours * 60):
         problems.append(f"The working day is {duration(back - leave)}, longer than "
                         f"{duration(round(rules.work_hours * 60))}.")
-    lines.append(f"Total: {len(order)} visit{'s' * (len(order) != 1)}, {walked} min walking, {waited} min waiting, "
+    lines.append(f"Total: {len(order)} visit{'s' * (len(order) != 1)}, {travelled} min travel, {waited} min waiting, "
                  f"working day {duration(back - leave)}.")
 
     header = "Plan check: OK." if not problems else f"Plan check: {len(problems)} problem{'s' * (len(problems) > 1)}."
     text = "\n".join([header, *lines, *(["Problems:", *(f"- {problem}" for problem in problems)] if problems else [])])
-    return Check(text, problems, walked, waited, leave, back)
+    return Check(text, problems, travelled, waited, leave, back)

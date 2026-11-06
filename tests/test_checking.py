@@ -19,31 +19,31 @@ def test_a_plan_without_problems_shows_the_day():
     assert result.problems == []
     assert result.text == ("Plan check: OK.\n"
                            "leave home 08:00\n"
-                           "P1: walk 5 min, arrive 08:05, start 08:05, finish 08:35\n"
-                           "P2: walk 10 min, arrive 08:45, start 08:45, finish 09:15\n"
-                           "walk 15 min, back home 09:30\n"
-                           "Total: 2 visits, 30 min walking, 0 min waiting, working day 1 h 30 min.")
+                           "P1: travel 5 min, arrive 08:05, start 08:05, finish 08:35\n"
+                           "P2: travel 10 min, arrive 08:45, start 08:45, finish 09:15\n"
+                           "travel 15 min, back home 09:30\n"
+                           "Total: 2 visits, 30 min travel, 0 min waiting, working day 1 h 30 min.")
 
 
 def test_the_nurse_leaves_just_in_time_for_the_first_visit():
     result = check(["P1"], {"P1": ("10:00", "")}, [5, 5], RULES)
     assert "leave home 09:45" in result.text  # 10 minutes' slack, 5 minutes' walk
-    assert "P1: walk 5 min, arrive 09:50, start 09:50" in result.text
+    assert "P1: travel 5 min, arrive 09:50, start 09:50" in result.text
 
 
 def test_the_nurse_waits_at_home_rather_than_at_a_door():
     # Leaving at 08:00 would mean waiting 250 minutes at P2; leaving later, P1 still has no window.
     result = check(["P1", "P2"], {"P1": ("", ""), "P2": ("13:00", "")}, [5, 5, 5], RULES)
     assert result.text.splitlines()[1:4] == ["leave home 12:10",
-                                             "P1: walk 5 min, arrive 12:15, start 12:15, finish 12:45",
-                                             "P2: walk 5 min, arrive 12:50, start 12:50, finish 13:20 (window 13:00-)"]
+                                             "P1: travel 5 min, arrive 12:15, start 12:15, finish 12:45",
+                                             "P2: travel 5 min, arrive 12:50, start 12:50, finish 13:20 (window 13:00-)"]
 
 
 def test_a_wait_that_cant_be_avoided_counts_against_the_longest_wait():
     # P1 must start by 08:40, P2 not before 12:50: the nurse waits between them.
     result = check(["P1", "P2"], {"P1": ("", "08:30"), "P2": ("13:00", "")}, [5, 5, 5], RULES)
     assert "leave home 08:35" in result.text  # as late as P1 allows
-    assert ("P2: walk 5 min, arrive 09:15, wait 215 min (longer than 20), start 12:50, finish 13:20 (window 13:00-)"
+    assert ("P2: travel 5 min, arrive 09:15, wait 215 min (longer than 20), start 12:50, finish 13:20 (window 13:00-)"
             in result.text)
     assert "215 min waiting, working day 4 h 50 min." in result.text
     assert result.problems == ["P2: waits 215 min at the door, more than the 20 min allowed."]
@@ -72,7 +72,7 @@ def test_starting_within_the_slack_after_the_window_is_fine():
 
 def test_starting_later_than_the_slack_is_a_problem():
     result = check(["P1", "P2"], {"P1": ("13:00", ""), "P2": ("", "12:00")}, [5, 5, 5], RULES)
-    assert "P2: walk 5 min, arrive 13:25, start 13:25, finish 13:55 (window -12:00): LATE, must start by 12:10" \
+    assert "P2: travel 5 min, arrive 13:25, start 13:25, finish 13:55 (window -12:00): LATE, must start by 12:10" \
         in result.text
     assert result.problems == ["P2 starts 75 min after its latest start (12:10)."]
     assert result.text.startswith("Plan check: 1 problem.")
@@ -95,7 +95,7 @@ def test_windows_the_model_could_not_give_are_problems():
 
 def test_a_leg_without_a_route_is_a_problem():
     result = check(["P1"], {"P1": ("", "")}, [None, 5], RULES)
-    assert result.problems == ["There is no walking route for leg 1 of the day."]
+    assert result.problems == ["There is no route for leg 1 of the day."]
 
 
 def test_the_rules_the_model_is_told():

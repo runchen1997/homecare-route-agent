@@ -45,8 +45,8 @@ empty list when unsure.
 |---|---|---|
 | submit_plan | Hands in the plan and finishes | Done |
 | find_address | Finds where addresses are on the map, for patients (by id) and home | Done |
-| travel_times | Walking minutes between places whose addresses were found | Done |
-| best_plans | Tries every plan and gives the best few: least walking, least waiting, home earliest | Done |
+| travel_times | Travel minutes, walking or driving, between places whose addresses were found | Done |
+| best_plans | Tries every plan and gives the best few: least travel, least waiting, home earliest | Done |
 | check_plan | Walks through the day in the model's order and reports the times and any broken rules | Done |
 
 ## The patient list
@@ -83,10 +83,16 @@ longitude: how far apart places are is for travel_times to say.
 
 ## Travel times
 
-travel_times asks a road router, [OSRM](https://project-osrm.org), running locally in Docker,
-for the walking time from every place the model names to every other one, in one request. It
-uses the walking road network built in `data/osrm/walking` (kept out of the repository). The
-model gets one line per starting place, e.g. `from home: P1 2, P2 3, P3 4`, in whole minutes.
+The nurse walks or drives (`--mode walking` or `--mode driving`; walking by default), and the
+model is told which. travel_times asks a road router, [OSRM](https://project-osrm.org), running
+locally in Docker, for the travel time from every place the model names to every other one, in
+one request. There is one router per way of travelling, each with its road network built in
+`data/osrm/walking` or `data/osrm/driving` (kept out of the repository). The model gets one line
+per starting place, e.g. `from home: P1 2, P2 3, P3 4`, in whole minutes.
+
+Driving times are OSRM's: no traffic, and no time to find a place to park, so they are too short
+for a city. From the home on 70th St, the patients in `examples/patients.csv` are 20-31 minutes
+away on foot and 3-6 by car.
 It gives no times until every place asked about has been found: given the other places' times,
 the model kept asking for travel times and never fixed the address that wasn't found.
 
@@ -123,11 +129,11 @@ through the day and answers with the times and the problems; it never suggests a
 ```
 Plan check: 1 problem.
 leave home 12:10
-P1: walk 5 min, arrive 12:15, start 12:15, finish 12:45
-P3: walk 5 min, arrive 12:50, start 12:50, finish 13:20 (window 13:00-)
-P2: walk 5 min, arrive 13:25, start 13:25, finish 13:55 (window -12:00): LATE, must start by 12:10
-walk 5 min, back home 14:00
-Total: 3 visits, 20 min walking, 0 min waiting, working day 1 h 50 min.
+P1: travel 5 min, arrive 12:15, start 12:15, finish 12:45
+P3: travel 5 min, arrive 12:50, start 12:50, finish 13:20 (window 13:00-)
+P2: travel 5 min, arrive 13:25, start 13:25, finish 13:55 (window -12:00): LATE, must start by 12:10
+travel 5 min, back home 14:00
+Total: 3 visits, 20 min travel, 0 min waiting, working day 1 h 50 min.
 Problems:
 - P2 starts 75 min after its latest start (12:10).
 ```
@@ -140,12 +146,12 @@ plan, the model writes its reasons for the nurse, in a sentence or two; they are
 best_plans takes each patient's window as the model read it from the list, tries every order of
 up to the most visits allowed, checks each one the way check_plan does, and keeps the plans with
 the most visits that fit the rules. It gives the best of those by three measures, because which
-is best depends on the nurse: the least walking can mean getting home hours later.
+is best depends on the nurse: the least travel can mean getting home hours later.
 
 ```
 Best plans with 5 visits (5178 plans with 5 visits fit the rules):
-- least walking, least waiting: P2 -> P1 -> P3 -> P6 -> P7: walk 67 min, wait 0 min, leave 11:19, back 14:56
-- earliest home: P5 -> P1 -> P2 -> P6 -> P7: walk 77 min, wait 0 min, leave 08:00, back 11:47
+- least travel, least waiting: P2 -> P1 -> P3 -> P6 -> P7: travel 67 min, wait 0 min, leave 11:19, back 14:56
+- earliest home: P5 -> P1 -> P2 -> P6 -> P7: travel 77 min, wait 0 min, leave 08:00, back 11:47
 Windows you gave, next to each patient's line in the list (id,name,address,earliest,latest):
 P1: none | P1,Elena Russo,"6302 18th Ave, Brooklyn",,
 P2: latest 12:00 | P2,Victor Huang,"1703 65th St, Brooklyn",,12:00
@@ -160,12 +166,13 @@ patients; longer lists are refused.
 ## Commands
 
 Run from the project root, in the project's Python environment (`.venv`). The model runs in
-[Ollama](https://ollama.com): install it, then `ollama pull llama3.1:8b`. The road router runs in
-Docker: start Docker, then the router.
+[Ollama](https://ollama.com): install it, then `ollama pull llama3.1:8b`. The road routers run in
+Docker: start Docker, then the routers.
 
 | What | Command |
 |---|---|
-| Start the road router | `docker compose up -d` |
+| Start the road routers, for walking and driving | `docker compose up -d` |
 | Plan tomorrow, showing every step | `.venv/Scripts/python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"` |
 | The same, for a working day of at most 3.5 hours | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --work-hours 3.5` |
+| The same, driving | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --mode driving` |
 | Run the tests | `.venv/Scripts/python -m pytest` |
