@@ -37,6 +37,12 @@ def times(*between):
     return {"thinking": "how far apart?", "action": "travel_times", "between": list(between)}
 
 
+def check_plan(order, **windows):
+    return {"thinking": "does it work?", "action": "check_plan", "order": order,
+            "windows": [{"patient": patient, "earliest": earliest, "latest": latest}
+                        for patient, (earliest, latest) in windows.items()]}
+
+
 def minutes(places):
     """A stand-in for travel.walking_minutes: one minute per 0.1 degree of latitude apart."""
     return [[round(abs(a.lat - b.lat) * 10) for b in places] for a in places]
@@ -45,6 +51,7 @@ def minutes(places):
 def find(address):
     """A stand-in for addresses.find that knows two addresses."""
     known = {"1 A St": Place("1 A Street, Brooklyn 11201", 40.1, -73.1),
+             "5 C St": Place("5 C Street, Brooklyn 11201", 40.2, -73.2),
              "9 Home St": Place("9 Home Street, Brooklyn 11209", 40.9, -73.9)}
     if address not in known:
         raise AddressError(f'not found: no street called "{address}"')
@@ -79,9 +86,11 @@ def test_the_model_sees_the_task_and_the_list_then_submits():
 
 def test_each_tool_has_its_own_shape_with_only_its_own_fields():
     shapes = {shape["properties"]["action"]["enum"][0]: shape for shape in make()[0].schema()["anyOf"]}
-    assert list(shapes) == ["find_address", "travel_times", "submit_plan"]
+    assert list(shapes) == ["find_address", "travel_times", "best_plans", "check_plan", "submit_plan"]
     assert [shape["required"] for shape in shapes.values()] == [
-        ["thinking", "action", "places"], ["thinking", "action", "between"], ["thinking", "action", "order"]]
+        ["thinking", "action", "places"], ["thinking", "action", "between"], ["thinking", "action", "windows"],
+        ["thinking", "action", "order", "windows"], ["thinking", "action", "order"]]
+    assert shapes["best_plans"]["properties"]["windows"]["minItems"] == 2  # every patient on the list
     assert list(shapes["travel_times"]["properties"]) == ["thinking", "action", "between"]  # thinking comes first
 
 
@@ -111,20 +120,18 @@ def test_the_model_looks_up_addresses_and_sees_what_was_found():
     assert sorted(a.found) == ["P1", "home"]  # kept for working out travel times later
 
 
-def test_travel_times_are_given_from_each_place_found():
-    a, _ = make(look_up(P1="1 A St", home="9 Home St"), times("home", "P1", "P2", "home"), submit(["P1"]))
-    result = a.run()
-    assert result.steps[1].result == ("Walking minutes:\n"
-                                      "from home: P1 8\n"
-                                      "from P1: home 8\n"
-                                      "P2: address not found yet; use find_address first")
+def test_travel_times_are_given_from_each_place():
+    a, _ = make(look_up(P1="1 A St", home="9 Home St"), times("home", "P1", "home"), submit(["P1"]))
+    assert a.run().steps[1].result == ("Walking minutes:\n"
+                                       "from home: P1 8\n"
+                                       "from P1: home 8")
 
 
-def test_travel_times_need_two_places_found():
-    a, _ = make(times("home", "P1"), submit(["P1"]))
-    assert a.run().steps[0].result == ("Travel times need at least two places whose addresses were found.\n"
-                                       "home: address not found yet; use find_address first\n"
-                                       "P1: address not found yet; use find_address first")
+def test_travel_times_only_once_every_place_asked_about_is_found():
+    a, _ = make(look_up(P1="1 A St"), times("home", "P1", "P2"), times("P1", "P1"), submit(["P1"]))
+    steps = a.run().steps
+    assert steps[1].result == "Find these addresses first, with find_address: home, P2."
+    assert steps[2].result == "Travel times need at least two different places."
 
 
 def test_an_answer_cut_off_uses_up_a_step():
@@ -138,3 +145,49 @@ def test_a_model_that_never_finishes_is_stopped(monkeypatch):
     a, _ = make(*[llm.CutOff("cut off")] * 3)
     result = a.run()
     assert (result.order, result.ended) == ([], "step limit")
+
+
+def test_the_model_checks_its_plan_against_the_rules_it_was_told():
+    a, ask = make(look_up(P1="1 A St", home="9 Home St"), check_plan(["P1"], P1=("", "08:00")), submit(["P1"]))
+    result = a.run()
+    # Home and P1 are 8 minutes apart in the stand-in, so P1 starts 08:08: within 10 minutes of 08:00.
+    assert result.steps[1].result == ("Plan check: OK.\n"
+                                      "leave home 08:00\n"
+                                      "P1: walk 8 min, arrive 08:08, start 08:08, finish 08:38 (window -08:00)\n"
+                                      "walk 8 min, back home 08:46\n"
+                                      "Total: 1 visit, 16 min walking, 0 min waiting.")
+    assert "Each visit takes 30 minutes." in ask.asked[0][0][1]["content"]
+
+
+def test_a_plan_is_checked_only_once_every_address_is_found():
+    a, _ = make(look_up(P1="1 A St"), check_plan(["P1", "P2"]), submit(["P1"]))
+    assert a.run().steps[1].result == "Find these addresses first, with find_address: home, P2."
+
+
+def best(**windows):
+    return {"thinking": "what are the best plans?", "action": "best_plans",
+            "windows": [{"patient": patient, "earliest": earliest, "latest": latest}
+                        for patient, (earliest, latest) in windows.items()]}
+
+
+def test_the_model_gets_the_best_plans_and_the_windows_next_to_the_list():
+    a, _ = make(look_up(P1="1 A St", P2="5 C St", home="9 Home St"), best(P1=("", "12:00"), P2=("", "")),
+                submit(["P1", "P2"]))
+    # In the stand-in, home is 8 minutes from P1 and 7 from P2, which are 1 minute apart.
+    assert a.run().steps[1].result == (
+        "Best plans with 2 visits (2 plans with 2 visits fit the rules):\n"
+        "- least walking, least waiting, earliest home: P1 -> P2: walk 16 min, wait 0 min, leave 08:00, back 09:16\n"
+        "Windows you gave, next to each patient's line in the list (id,Patient,Where):\n"
+        "P1: latest 12:00 | P1,Ana,1 A St\n"
+        "P2: none | P2,Bo,2 B St\n"
+        "If a window is wrong, call best_plans again with it fixed.")
+
+
+def test_best_plans_need_every_address_and_every_window():
+    a, _ = make(best(P1=("", "")), look_up(P1="1 A St", P2="5 C St", home="9 Home St"), best(P1=("", "")),
+                best(P1=("1pm", ""), P2=("", "")), submit(["P1"]))
+    steps = a.run().steps
+    assert steps[0].result == "Find these addresses first, with find_address: home, P1, P2."
+    assert steps[2].result == ("Give a window for every patient on the list; missing: P2. "
+                               "Leave earliest and latest empty where the list gives none.")
+    assert steps[3].result == 'P1: "1pm" is not a time written as HH:MM.'

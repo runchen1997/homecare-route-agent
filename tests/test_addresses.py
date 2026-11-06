@@ -40,7 +40,8 @@ def test_a_found_address_has_its_place_on_the_map(index):
 
 
 def test_a_street_not_in_the_index(index):
-    with pytest.raises(AddressError, match='not found: no street called "19th avenue"'):
+    with pytest.raises(AddressError, match='not found: no street called "19th avenue".*; check how the street is '
+                                           'written: write it as house number, street name with its type'):
         find("6502 19th Ave, Brooklyn", index)
 
 

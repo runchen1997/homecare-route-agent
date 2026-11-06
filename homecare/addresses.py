@@ -26,6 +26,12 @@ class Place:
     lon: float
 
 
+# How to write an address, for the model. The example has no real street in it: with one, the
+# model copied it ("1025 18th Avenue" for a home on 70th St), which could find the wrong place.
+HOW_TO_WRITE = ('write it as house number, street name with its type (St, Ave, Pkwy, ...), borough, '
+                'e.g. "<number> <name> St, Brooklyn"')
+
+
 class AddressError(ValueError):
     """The address wasn't found, or matches more than one place. The message says which, and why."""
 
@@ -35,8 +41,7 @@ def parse(text: str) -> tuple[str, str, str | None]:
     parts = [" ".join(part.split()) for part in text.lower().replace(".", "").split(",")]
     match = re.fullmatch(r"(\d+(?:-\d+)?) (.+)", parts[0])
     if not match:
-        raise AddressError(f'not found: could not read "{text}"; write it as number, street, borough, '
-                           f'e.g. "6302 18th Ave, Brooklyn"')
+        raise AddressError(f'not found: could not read "{text}"; {HOW_TO_WRITE}')
     number, words = match[1], match[2].split()
     words[-1] = STREET_TYPES.get(words[-1], words[-1])
     if len(words) > 1:
@@ -58,7 +63,8 @@ def find(text: str, index: pathlib.Path = INDEX) -> Place:
         street_name = db.execute(f"SELECT display FROM addresses WHERE {on_street} LIMIT 1",
                                  (street, borough, borough)).fetchone()
         if street_name is None:
-            raise AddressError(f'not found: no street called "{street}"{where} in the address index')
+            raise AddressError(f'not found: no street called "{street}"{where} in the address index; check how '
+                               f'the street is written: {HOW_TO_WRITE}')
         rows = db.execute(f"SELECT display, borough, zip, lat, lon FROM addresses WHERE {on_street} AND number = ?",
                           (street, borough, borough, number)).fetchall()
     if not rows:
