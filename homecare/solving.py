@@ -17,9 +17,11 @@ from homecare import checking
 
 MAX_PATIENTS = 12  # more than this, and trying every plan would take too long
 
-# Each measure: what to make smallest first, then the others to break ties.
+# Each measure: what to make smallest first, then the others to break ties. The nurse's preference
+# (Rules.prefer) is one of the first two; best_plans puts it first.
 MEASURES = {
     "least travel": lambda check: (check.travel, check.waiting, check.back),
+    "tightest group": lambda check: (check.between_patients, check.travel, check.waiting, check.back),
     "least waiting": lambda check: (check.waiting, check.travel, check.back),
     "earliest home": lambda check: (check.back, check.travel, check.waiting),
 }
@@ -30,6 +32,7 @@ class Best:
     order: list[str]
     check: checking.Check
     measures: list[str]  # the measures this plan is best by
+    preferred: bool = False  # best by the measure the nurse prefers
 
 
 @dataclasses.dataclass
@@ -37,16 +40,16 @@ class Found:
     visits: int  # the most visits any plan that fits the rules manages; 0 if none fits
     most_allowed: int  # the most visits the rules and the list allow
     fitting: int  # how many plans with that many visits fit the rules
-    best: list[Best]
+    best: list[Best]  # the plan best by the nurse's preference first
 
 
-def best_plans(patients: list[str], windows: dict[str, tuple[str, str]], minutes: list[list[int | None]],
+def best_plans(patients: list[str], windows: dict[str, tuple[str, str]], seconds: list[list[int | None]],
                rules: checking.Rules) -> Found:
     """The best plans with as many visits as possible.
 
     windows: each patient's (earliest, latest), "" for none; a patient left out has none.
-    minutes: travel minutes between the places home, *patients, in that order (None where
-    there is no route). Raises ValueError for a list that is too long, or a time that isn't HH:MM."""
+    seconds: travel seconds between the places home, *patients, in that order (None where
+    there is no route); plans are compared in seconds, so close ones aren't tied by rounding. Raises ValueError for a list that is too long, or a time that isn't HH:MM."""
     windows = {patient: windows.get(patient, ("", "")) for patient in patients}
     if len(patients) > MAX_PATIENTS:
         raise ValueError(f"best_plans tries every plan, so it works for up to {MAX_PATIENTS} patients; "
@@ -65,15 +68,17 @@ def best_plans(patients: list[str], windows: dict[str, tuple[str, str]], minutes
         fitting = []
         for order in itertools.permutations(patients, visits):
             stops = ["home", *order, "home"]
-            legs = [minutes[index[start]][index[end]] for start, end in zip(stops, stops[1:])]
+            legs = [seconds[index[start]][index[end]] for start, end in zip(stops, stops[1:])]
             check = checking.check(list(order), windows, legs, rules)
             if not check.problems:
                 fitting.append((list(order), check))
         if fitting:
             best: dict[tuple, Best] = {}  # a plan best by several measures is listed once
-            for measure, key in MEASURES.items():
-                order, check = min(fitting, key=lambda plan: key(plan[1]))
-                best.setdefault(tuple(order), Best(order, check, [])).measures.append(measure)
+            measures = [rules.prefer, *(measure for measure in MEASURES if measure != rules.prefer)]
+            for measure in measures:
+                order, check = min(fitting, key=lambda plan: MEASURES[measure](plan[1]))
+                plan = best.setdefault(tuple(order), Best(order, check, [], preferred=measure == rules.prefer))
+                plan.measures.append(measure)
             return Found(visits, most_allowed, len(fitting), list(best.values()))
     return Found(0, most_allowed, 0, [])
 
@@ -88,6 +93,10 @@ def describe(found: Found) -> str:
     lines = [head]
     for plan in found.best:
         c = plan.check
-        lines.append(f"- {', '.join(plan.measures)}: {' -> '.join(plan.order)}: travel {c.travel} min, "
-                     f"wait {c.waiting} min, leave {checking.clock(c.leave)}, back {checking.clock(c.back)}")
+        measures = list(plan.measures)
+        if plan.preferred:  # its first measure is the one the nurse prefers
+            measures[0] += " (the nurse's preference)"
+        lines.append(f"- {', '.join(measures)}: {' -> '.join(plan.order)}: "
+                     f"travel {checking.shown(c.travel)} min ({checking.shown(c.between_patients)} between patients), "
+                     f"wait {checking.shown(c.waiting)} min, leave {checking.clock(c.leave)}, back {checking.clock(c.back)}")
     return "\n".join(lines)

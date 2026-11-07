@@ -43,9 +43,9 @@ def check_plan(order, **windows):
                         for patient, (earliest, latest) in windows.items()]}
 
 
-def minutes(places):
-    """A stand-in for travel.walking_minutes: one minute per 0.1 degree of latitude apart."""
-    return [[round(abs(a.lat - b.lat) * 10) for b in places] for a in places]
+def seconds(places):
+    """A stand-in for travel.travel_seconds: one minute per 0.1 degree of latitude apart."""
+    return [[round(abs(a.lat - b.lat) * 10) * 60 for b in places] for a in places]
 
 
 def find(address):
@@ -60,7 +60,7 @@ def find(address):
 
 def make(*answers):
     ask = scripted(*answers)
-    return Agent(Request(CSV, "9 Home St"), ask, log=lambda *_: None, find=find, minutes=minutes), ask
+    return Agent(Request(CSV, "9 Home St"), ask, log=lambda *_: None, find=find, seconds=seconds), ask
 
 
 def test_the_list_is_shown_one_patient_per_line_with_each_cell_named():
@@ -183,7 +183,8 @@ def test_the_model_gets_the_best_plans_and_the_windows_next_to_the_list():
     # In the stand-in, home is 8 minutes from P1 and 7 from P2, which are 1 minute apart.
     assert a.run().steps[1].result == (
         "Best plans with 2 visits (2 plans with 2 visits fit the rules):\n"
-        "- least travel, least waiting, earliest home: P1 -> P2: travel 16 min, wait 0 min, leave 08:00, back 09:16\n"
+        "- least travel (the nurse's preference), tightest group, least waiting, earliest home: P1 -> P2: "
+        "travel 16 min (1 between patients), wait 0 min, leave 08:00, back 09:16\n"
         "Windows you gave, next to each patient's line in the list:\n"
         "P1: latest 12:00 | list: P1: Patient: Ana; Where: 1 A St\n"
         "P2: none | list: P2: Patient: Bo; Where: 2 B St\n"
@@ -202,7 +203,7 @@ def test_best_plans_need_every_address_and_every_window():
 
 def test_the_nurse_travels_the_way_the_request_says(monkeypatch):
     modes = []
-    monkeypatch.setattr(agent.travel, "travel_minutes", lambda places, mode: modes.append(mode) or minutes(places))
+    monkeypatch.setattr(agent.travel, "travel_seconds", lambda places, mode: modes.append(mode) or seconds(places))
     ask = scripted(look_up(P1="1 A St", home="9 Home St"), times("home", "P1"), submit(["P1"]))
     result = Agent(Request(CSV, "9 Home St", mode="driving"), ask, log=lambda *_: None, find=find).run()
     assert "The nurse travels by car." in ask.asked[0][0][1]["content"]

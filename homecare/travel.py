@@ -38,12 +38,14 @@ def ask_router(service: str, places: list[Place], mode: str, options: str) -> di
     return reply
 
 
-def travel_minutes(places: list[Place], mode: str = "walking") -> list[list[int | None]]:
-    """minutes[i][j]: minutes from places[i] to places[j] by `mode`, rounded; None if there is no route.
+def travel_seconds(places: list[Place], mode: str = "walking") -> list[list[int | None]]:
+    """seconds[i][j]: seconds from places[i] to places[j] by `mode`, rounded; None if there is no route.
 
-    Driving times are OSRM's: no traffic, and no time to park."""
+    Seconds, not minutes: a day's legs are added up, and comparing plans by legs each rounded to a
+    minute ties plans that aren't equal (a 13-second drive counted as 0 minutes) and can pick a
+    longer one. Driving times are OSRM's: no traffic, and no time to park."""
     reply = ask_router("table", places, mode, "annotations=duration")
-    return [[None if seconds is None else round(seconds / 60) for seconds in row] for row in reply["durations"]]
+    return [[None if seconds is None else round(seconds) for seconds in row] for row in reply["durations"]]
 
 
 def route(places: list[Place], mode: str = "walking") -> list[list[list[float]]]:

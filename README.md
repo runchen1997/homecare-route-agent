@@ -90,6 +90,11 @@ one request. There is one router per way of travelling, each with its road netwo
 `data/osrm/walking` or `data/osrm/driving` (kept out of the repository). The model gets one line
 per starting place, e.g. `from home: P1 2, P2 3, P3 4`, in whole minutes.
 
+The code keeps travel times in seconds, and shows minutes only in what the model and the nurse
+read. Plans are compared by adding up a day's legs, and with each leg rounded to a minute first,
+a 13-second drive counted as 0 and 23 different plans for a list tied at 10 minutes; the one
+picked drove 37 seconds more than the shortest.
+
 Driving times are OSRM's: no traffic, and no time to find a place to park, so they are too short
 for a city. For the map, the same router also gives the way along the streets for each leg of the
 plan (`travel.route`). From the home on 70th St, the patients in `examples/patients.csv` are 20-31 minutes
@@ -110,10 +115,17 @@ The rules are the user's, with defaults, and the model is told the same rules ch
 | A visit may start this much before or after the patient's window | 10 minutes | `--window-slack` |
 | Longest working day, from leaving home to getting back | no limit | `--work-hours` |
 | Longest wait at a patient's door | 20 minutes | `--max-wait` |
+| Best plan, among those with as many visits | least travel | `--prefer` (`least travel` or `tightest group`) |
 
 The nurse sets how much work the day holds: how many visits (`--max-visits`), or how long the
 day may be (`--day-start` and `--day-end` for a time of day, `--work-hours` for a length), or
-both. Within that, the plan has as many visits as fit, then the least travel.
+both. Within that, the plan has as many visits as fit, then what the nurse prefers: the least
+travel in the whole day, or the tightest group of patients, the least travel from one patient to
+the next. They differ when some patients live near home and the rest close together farther
+away: the least travel picks the ones on the way, and the tightest group the ones together, for a
+few minutes more (from 1025 70th St, `examples/18th_avenue.csv` takes 10.3 minutes' driving with
+3.2 between patients, or 11.3 with 2.3). A group close together is easier to rearrange when a
+visit runs long or is cancelled.
 
 The nurse leaves home as late as the plan allows: as late as lets every visit start within its
 window, without getting home later. So the nurse waits at home rather than at a door, and the
@@ -146,18 +158,25 @@ plan, the model writes its reasons for the nurse, in a sentence or two; they are
 
 best_plans takes each patient's window as the model read it from the list, tries every order of
 up to the most visits allowed, checks each one the way check_plan does, and keeps the plans with
-the most visits that fit the rules. It gives the best of those by three measures, because which
-is best depends on the nurse: the least travel can mean getting home hours later.
+the most visits that fit the rules. It gives the best of those by four measures: the least
+travel, the tightest group, the least waiting, and home earliest. The one the nurse prefers comes
+first, and is marked; the others are there because the least travel can mean getting home hours
+later, and so the model can say what the nurse's choice costs.
 
 ```
-Best plans with 5 visits (5178 plans with 5 visits fit the rules):
-- least travel, least waiting: P2 -> P1 -> P3 -> P6 -> P7: travel 67 min, wait 0 min, leave 11:19, back 14:56
-- earliest home: P5 -> P1 -> P2 -> P6 -> P7: travel 77 min, wait 0 min, leave 08:00, back 11:47
-Windows you gave, next to each patient's line in the list (id,name,address,earliest,latest):
-P1: none | P1,Elena Russo,"6302 18th Ave, Brooklyn",,
-P2: latest 12:00 | P2,Victor Huang,"1703 65th St, Brooklyn",,12:00
+Best plans with 5 visits (5165 plans with 5 visits fit the rules):
+- least travel (the nurse's preference): P2 -> P3 -> P1 -> P6 -> P7: travel 68 min (24 between patients), wait 4 min, leave 11:46, back 15:28
+- tightest group: P7 -> P6 -> P2 -> P1 -> P3: travel 70 min (20 between patients), wait 0 min, leave 10:10, back 13:50
+- least waiting: P2 -> P1 -> P3 -> P6 -> P7: travel 69 min (25 between patients), wait 0 min, leave 11:18, back 14:57
+- earliest home: P5 -> P1 -> P2 -> P6 -> P7: travel 77 min (29 between patients), wait 0 min, leave 08:00, back 11:47
+Windows you gave, next to each patient's line in the list:
+P1: none | list: P1: name: Elena Russo; address: 6302 18th Ave, Brooklyn; earliest: (empty); latest: (empty)
+P2: latest 12:00 | list: P2: name: Victor Huang; address: 1703 65th St, Brooklyn; earliest: (empty); latest: 12:00
 ...
 ```
+
+(`examples/patients.csv`, walking from 1025 70th St.) The least travel and the least waiting are
+21 seconds of walking apart here.
 
 The plans are only as good as the model's reading: with a window misread, they are the best
 plans for the wrong rules. So the answer shows each window the model gave next to the list's own

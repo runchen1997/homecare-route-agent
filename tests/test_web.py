@@ -19,9 +19,9 @@ def find(address):
     return PLACES[address]
 
 
-def minutes(places, mode):
+def seconds(places, mode):
     """Five minutes between any two different places."""
-    return [[0 if a == b else 5 for b in places] for a in places]
+    return [[0 if a == b else 300 for b in places] for a in places]
 
 
 def route(places, mode):
@@ -57,8 +57,8 @@ SUBMIT = {"thinking": "done", "action": "submit_plan", "order": ["P1", "P2"], "r
 
 
 def test_each_step_then_the_plan_with_its_schedule_and_route():
-    app = create_app(scripted(LOOK_UP, BEST, SUBMIT), find, minutes, route)
-    response = post(app, mode="driving", rules={"max_visits": 2})
+    app = create_app(scripted(LOOK_UP, BEST, SUBMIT), find, seconds, route)
+    response = post(app, mode="driving", rules={"max_visits": 2, "prefer": "tightest group"})
     assert response.headers["content-type"].startswith("text/event-stream")
     sent = events(response)
     assert [name for name, _ in sent] == ["step", "step", "step", "plan"]
@@ -73,6 +73,7 @@ def test_each_step_then_the_plan_with_its_schedule_and_route():
     # Five minutes between places, so the day is 08:00 to 09:15; P1's window is the one the model gave.
     assert (schedule["leave"], schedule["back"], schedule["working_minutes"], schedule["problems"]) == (
         "08:00", "09:15", 75, [])
+    assert (schedule["travel_minutes"], schedule["between_minutes"], schedule["prefer"]) == (15, 5, "tightest group")
     assert schedule["stops"][0] == {"patient": "P1", "travel_minutes": 5, "arrive": "08:05", "wait_minutes": 0,
                                     "start": "08:05", "finish": "08:35", "earliest": None, "latest": "09:00",
                                     "late": False}
@@ -82,7 +83,7 @@ def test_each_step_then_the_plan_with_its_schedule_and_route():
 
 def test_a_plan_whose_places_were_not_all_found_has_no_schedule():
     look_up_one = {**LOOK_UP, "places": LOOK_UP["places"][:1]}
-    app = create_app(scripted(look_up_one, SUBMIT), find, minutes, route)
+    app = create_app(scripted(look_up_one, SUBMIT), find, seconds, route)
     plan = events(post(app))[-1][1]
     assert (plan["order"], plan["schedule"], plan["route"], plan["home"]) == (["P1", "P2"], None, [], None)
 
@@ -91,7 +92,7 @@ def test_what_goes_wrong_is_sent_as_an_error():
     def ask(messages, schema, max_tokens):
         raise ConnectionError("the model isn't running")
 
-    app = create_app(ask, find, minutes, route)
+    app = create_app(ask, find, seconds, route)
     assert events(post(app)) == [("error", {"message": "the model isn't running"})]
     assert events(post(app, csv="name,address\n")) == [
         ("error", {"message": "the patient list needs a header row and at least one patient"})]
@@ -99,7 +100,7 @@ def test_what_goes_wrong_is_sent_as_an_error():
 
 
 def test_one_plan_at_a_time():
-    app = create_app(scripted(), find, minutes, route)
+    app = create_app(scripted(), find, seconds, route)
     app.state.busy.acquire()
     response = post(app)
     assert response.status_code == 409
@@ -107,13 +108,14 @@ def test_one_plan_at_a_time():
 
 
 def test_a_request_that_makes_no_sense_is_refused():
-    app = create_app(scripted(), find, minutes, route)
+    app = create_app(scripted(), find, seconds, route)
     assert post(app, mode="flying").status_code == 422
     assert post(app, rules={"max_visits": "many"}).status_code == 422
+    assert post(app, rules={"prefer": "the prettiest"}).status_code == 422
 
 
 def test_the_sample_lists_come_with_a_home():
-    samples = TestClient(create_app(scripted(), find, minutes, route)).get("/api/examples").json()
+    samples = TestClient(create_app(scripted(), find, seconds, route)).get("/api/examples").json()
     names = [sample["name"] for sample in samples]
     assert "patients.csv" in names and "18th_avenue.csv" in names
     assert next(s for s in samples if s["name"] == "18th_avenue.csv")["home"] == "6302 18th Ave, Brooklyn"
@@ -122,14 +124,14 @@ def test_the_sample_lists_come_with_a_home():
 
 def test_the_page_is_served_once_built(tmp_path):
     (tmp_path / "index.html").write_text("<p>the page</p>")
-    client = TestClient(create_app(scripted(), find, minutes, route, page=tmp_path))
+    client = TestClient(create_app(scripted(), find, seconds, route, page=tmp_path))
     assert client.get("/").text == "<p>the page</p>"
     assert client.get("/api/examples").status_code == 200  # the API still comes first
-    assert TestClient(create_app(scripted(), find, minutes, route, page=tmp_path / "none")).get("/").status_code == 404
+    assert TestClient(create_app(scripted(), find, seconds, route, page=tmp_path / "none")).get("/").status_code == 404
 
 
 def test_the_map_files_are_served_a_piece_at_a_time(tmp_path):
     (tmp_path / "nyc.pmtiles").write_bytes(bytes(range(100)))
-    client = TestClient(create_app(scripted(), find, minutes, route, page=tmp_path / "none", map_data=tmp_path))
+    client = TestClient(create_app(scripted(), find, seconds, route, page=tmp_path / "none", map_data=tmp_path))
     piece = client.get("/map-data/nyc.pmtiles", headers={"Range": "bytes=10-19"})
     assert (piece.status_code, piece.content) == (206, bytes(range(10, 20)))

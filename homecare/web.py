@@ -50,11 +50,11 @@ def shown_place(place: addresses.Place | None) -> dict | None:
     return None if place is None else {"address": place.display, "lon": place.lon, "lat": place.lat}
 
 
-def shown_plan(planner: agent.Agent, result: agent.Result, minutes, route) -> dict:
+def shown_plan(planner: agent.Agent, result: agent.Result, seconds, route) -> dict:
     """What the page shows once the model is done: every patient, and the plan the model submitted,
     checked against the windows it gave, with the route along the streets.
 
-    minutes(places) and route(places) are travel times and the route's lines, the way the nurse travels."""
+    seconds(places) and route(places) are travel times and the route's lines, the way the nurse travels."""
     found = planner.found
     plan = {
         "ended": result.ended,
@@ -70,16 +70,17 @@ def shown_plan(planner: agent.Agent, result: agent.Result, minutes, route) -> di
     if not result.order or any(place not in found for place in stops):
         return plan
     places = [found[place] for place in stops]
-    table = minutes(places)
+    table = seconds(places)
     legs = [table[i][i + 1] for i in range(len(places) - 1)]
     check = checking.check(result.order, planner.windows, legs, planner.request.rules)
-    clock = checking.clock
+    clock, shown = checking.clock, checking.shown  # times are worked out in seconds, shown in minutes
     plan["schedule"] = {
-        "leave": clock(check.leave), "back": clock(check.back), "working_minutes": check.back - check.leave,
-        "travel_minutes": check.travel, "waiting_minutes": check.waiting,
-        "travel_home_minutes": legs[-1], "problems": check.problems,
-        "stops": [{"patient": stop.patient, "travel_minutes": stop.travel, "arrive": clock(stop.arrive),
-                   "wait_minutes": stop.wait, "start": clock(stop.start), "finish": clock(stop.finish),
+        "leave": clock(check.leave), "back": clock(check.back), "working_minutes": shown(check.back - check.leave),
+        "travel_minutes": shown(check.travel), "between_minutes": shown(check.between_patients),
+        "waiting_minutes": shown(check.waiting), "prefer": planner.request.rules.prefer,
+        "travel_home_minutes": shown(legs[-1]), "problems": check.problems,
+        "stops": [{"patient": stop.patient, "travel_minutes": shown(stop.travel), "arrive": clock(stop.arrive),
+                   "wait_minutes": shown(stop.wait), "start": clock(stop.start), "finish": clock(stop.finish),
                    "earliest": None if stop.earliest is None else clock(stop.earliest),
                    "latest": None if stop.latest is None else clock(stop.latest), "late": stop.late}
                   for stop in check.stops],
@@ -88,11 +89,11 @@ def shown_plan(planner: agent.Agent, result: agent.Result, minutes, route) -> di
     return plan
 
 
-def create_app(ask=llm.ask, find=addresses.find, minutes=travel.travel_minutes, route=travel.route,
+def create_app(ask=llm.ask, find=addresses.find, seconds=travel.travel_seconds, route=travel.route,
                page: pathlib.Path = PAGE, map_data: pathlib.Path = MAP_DATA) -> FastAPI:
     """The web service. The model, the address index and the road routers can be swapped for stand-ins.
 
-    minutes(places, mode) and route(places, mode) are as in homecare.travel. The page is served
+    seconds(places, mode) and route(places, mode) are as in homecare.travel. The page is served
     from `page` if it has been built, and the map's files from `map_data` if they are there."""
     app = FastAPI(title="Home-care route planner")
     app.state.busy = threading.Lock()  # held while a plan is being worked out
@@ -112,10 +113,10 @@ def create_app(ask=llm.ask, find=addresses.find, minutes=travel.travel_minutes, 
 
         def work() -> None:
             try:
-                by_mode = lambda places: minutes(places, request.mode)
+                by_mode = lambda places: seconds(places, request.mode)
                 planner = agent.Agent(
                     agent.Request(request.csv, request.home, request.rules, request.mode), ask,
-                    log=lambda *_: None, find=find, minutes=by_mode,
+                    log=lambda *_: None, find=find, seconds=by_mode,
                     on_step=lambda number, step: events.put(("step", {"number": number, **dataclasses.asdict(step)})))
                 result = planner.run()
                 events.put(("plan", shown_plan(planner, result, by_mode, lambda places: route(places, request.mode))))

@@ -37,8 +37,8 @@ You are a planning agent for a home-care nurse. You plan tomorrow's visits: whic
 see, and in what order.
 
 The goal: visit as many patients as possible, up to the limit. Among plans with the same number
-of visits, choose the one with the least travel. Respect each patient's time window, as the
-patient list gives it.
+of visits, choose the one the nurse prefers, as the task says. Respect each patient's time window,
+as the patient list gives it.
 
 You work step by step. At each step, write your thinking, then choose one action:
 {actions}
@@ -113,11 +113,11 @@ def shown_window(earliest: str, latest: str) -> str:
 
 class Agent:
     def __init__(self, request: Request, ask=llm.ask, log=print, find=addresses.find,
-                 minutes=None, on_step=None):
+                 seconds=None, on_step=None):
         self.request, self.ask, self.log, self.find = request, ask, log, find
         self.on_step = on_step  # called with each step's number and Step as soon as it is taken
-        # Travel minutes between places, the way the nurse travels.
-        self.minutes = minutes or (lambda places: travel.travel_minutes(places, request.mode))
+        # Travel seconds between places, the way the nurse travels; the model is shown minutes.
+        self.seconds = seconds or (lambda places: travel.travel_seconds(places, request.mode))
         self.patient_list, self.ids = numbered(request.csv_text)
         self.rows = dict(zip(self.ids, self.patient_list.splitlines()))  # to show next to the windows read from them
         self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
@@ -146,9 +146,9 @@ class Agent:
                 self.travel_times,
             ),
             "best_plans": (
-                "best_plans: the best plans by the rules, worked out by trying every plan: the one with the least "
-                "travel, the one with the least waiting, and the one home earliest, each with as many visits as "
-                "possible. Fill in windows: for every patient on the list, the time window the list gives, earliest "
+                "best_plans: the best plans by the rules, worked out by trying every plan, each with as many visits "
+                "as possible: the one the nurse prefers first, then the one with the least travel or the tightest "
+                "group, the least waiting, and home earliest. Fill in windows: for every patient on the list, the time window the list gives, earliest "
                 "and latest as HH:MM, empty if the list gives none.",
                 {"windows": self.windows_field(minimum=len(self.ids))},
                 self.best_plans,
@@ -222,10 +222,10 @@ class Agent:
             return f"Find these addresses first, with find_address: {', '.join(missing)}.", False
         if len(asked) < 2:
             return "Travel times need at least two different places.", False
-        minutes = self.minutes([self.found[place] for place in asked])
+        seconds = self.seconds([self.found[place] for place in asked])
         lines = [f"Travel minutes ({self.request.mode}):"]
         for i, start in enumerate(asked):
-            legs = [f"{end} {'no route' if minutes[i][j] is None else minutes[i][j]}"
+            legs = [f"{end} {'no route' if seconds[i][j] is None else checking.shown(seconds[i][j])}"
                     for j, end in enumerate(asked) if j != i]
             lines.append(f"from {start}: {', '.join(legs)}")
         return "\n".join(lines), False
@@ -242,7 +242,7 @@ class Agent:
                     "Leave earliest and latest empty where the list gives none."), False
         self.windows.update(windows)
         try:
-            found = solving.best_plans(self.ids, windows, self.minutes([self.found[p] for p in places]),
+            found = solving.best_plans(self.ids, windows, self.seconds([self.found[p] for p in places]),
                                        self.request.rules)
         except ValueError as problem:
             return str(problem), False
@@ -259,8 +259,8 @@ class Agent:
         if missing:
             return f"Find these addresses first, with find_address: {', '.join(missing)}.", False
         places = list(dict.fromkeys(stops))
-        minutes = self.minutes([self.found[place] for place in places])
-        legs = [minutes[places.index(start)][places.index(end)] for start, end in zip(stops, stops[1:])]
+        seconds = self.seconds([self.found[place] for place in places])
+        legs = [seconds[places.index(start)][places.index(end)] for start, end in zip(stops, stops[1:])]
         windows = {window["patient"]: (window["earliest"], window["latest"]) for window in answer["windows"]}
         self.windows.update(windows)
         return checking.check(order, windows, legs, self.request.rules).text, False
@@ -311,10 +311,12 @@ def main() -> None:
                         help="the longest working day, from leaving home to getting back, e.g. 4 or 5.5")
     parser.add_argument("--max-wait", type=int, default=default.max_wait_minutes,
                         help="the longest wait at a patient's door, in minutes")
+    parser.add_argument("--prefer", choices=list(checking.PREFERENCES), default=default.prefer,
+                        help="among plans with as many visits: the least travel, or the tightest group of patients")
     args = parser.parse_args()
     rules = checking.Rules(day_start=args.day_start, day_end=args.day_end, max_visits=args.max_visits,
                            visit_minutes=args.visit_minutes, window_slack_minutes=args.window_slack,
-                           work_hours=args.work_hours, max_wait_minutes=args.max_wait)
+                           work_hours=args.work_hours, max_wait_minutes=args.max_wait, prefer=args.prefer)
     with open(args.csv, encoding="utf-8") as file:
         request = Request(file.read(), args.home, rules, args.mode)
     result = Agent(request).run()

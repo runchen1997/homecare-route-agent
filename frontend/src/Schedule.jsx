@@ -38,7 +38,7 @@ export default function Schedule({ plan }) {
     <div className="schedule">
       <div className="totals">
         <div><strong>{s.stops.length}</strong><span>visits</span></div>
-        <div><strong>{duration(s.travel_minutes)}</strong><span>travel</span></div>
+        <div><strong>{duration(s.travel_minutes)}</strong><span>travel, {duration(s.between_minutes)} between patients</span></div>
         <div><strong>{duration(s.waiting_minutes)}</strong><span>waiting</span></div>
         <div><strong>{s.leave}–{s.back}</strong><span>{duration(s.working_minutes)} day</span></div>
       </div>

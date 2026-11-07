@@ -14,6 +14,7 @@ export default function PlanForm({ onSubmit, running }) {
   const [visitMinutes, setVisitMinutes] = useState(30);
   const [slack, setSlack] = useState(10);
   const [maxWait, setMaxWait] = useState("20");
+  const [prefer, setPrefer] = useState("least travel");
 
   useEffect(() => {
     examples().then(setSamples);
@@ -43,6 +44,7 @@ export default function PlanForm({ onSubmit, running }) {
         visit_minutes: Number(visitMinutes),
         window_slack_minutes: Number(slack),
         max_wait_minutes: maxWait === "" ? null : Number(maxWait),
+        prefer,
       },
     });
   }
@@ -83,17 +85,18 @@ export default function PlanForm({ onSubmit, running }) {
 
       <section>
         <h2>Getting around</h2>
-        <div className="segmented" role="radiogroup">
-          {[
-            ["walking", "Walking"],
-            ["driving", "Driving"],
-          ].map(([value, label]) => (
-            <label key={value} className={mode === value ? "on" : ""}>
-              <input type="radio" name="mode" value={value} checked={mode === value} onChange={() => setMode(value)} />
-              {label}
-            </label>
-          ))}
-        </div>
+        <Choice name="mode" value={mode} onChange={setMode} options={[["walking", "Walking"], ["driving", "Driving"]]} />
+      </section>
+
+      <section>
+        <h2>Best plan</h2>
+        <Choice name="prefer" value={prefer} onChange={setPrefer}
+                options={[["least travel", "Least travel"], ["tightest group", "Patients close together"]]} />
+        <p className="hint">
+          {prefer === "least travel"
+            ? "The shortest day of travel, counting the trips from home and back."
+            : "The least travel from one patient to the next, even if home is a little farther away."}
+        </p>
       </section>
 
       <section>
@@ -142,5 +145,19 @@ export default function PlanForm({ onSubmit, running }) {
         {running ? "Planning…" : "Plan tomorrow"}
       </button>
     </form>
+  );
+}
+
+// One of a few choices, shown as a row of buttons.
+function Choice({ name, value, onChange, options }) {
+  return (
+    <div className="segmented" role="radiogroup">
+      {options.map(([option, label]) => (
+        <label key={option} className={value === option ? "on" : ""}>
+          <input type="radio" name={name} value={option} checked={value === option} onChange={() => onChange(option)} />
+          {label}
+        </label>
+      ))}
+    </div>
   );
 }
