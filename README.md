@@ -222,6 +222,34 @@ world, which is made from [OpenStreetMap](https://www.openstreetmap.org/copyrigh
 map shows that credit. Its fonts and icons are in `data/map` too, and the map follows the
 computer's light or dark setting.
 
+## Evaluation
+
+`evals/` runs the planner on a fixed set of 24 cases and scores every plan the same way. The cases
+use five patient lists: the three in `examples/`, one in Manhattan with each window in a single
+column (`09:00-11:00`, `by 12:00`), and one in Bay Ridge with the columns in another order, the
+times among other notes (`call first; between 1 and 3pm`), and an address the index can't find as
+written (`6901 Third Avenue, Bay Ridge`). Across them the cases change how home is written,
+walking or driving, the workload (most visits, longest day, back by a time) and the nurse's
+preference.
+
+Each list comes with its true windows, and each case's answer key is worked out by best_plans
+with those, not with the model's reading: the plan best by the nurse's preference, in seconds.
+The model's plan is then checked against the true windows, and scored apart on each count:
+
+| Count | First run (24 cases, llama3.1:8b) |
+|---|---|
+| The best plan, by the nurse's preference | 24/24 |
+| Fits the rules, with the true windows | 24/24 |
+| Every address found | 24/24 |
+| Every window read as the list means it | 19/24 (214 of 220 windows) |
+| Steps | 5.8 on average; 13 wasted in all (a tool refused the call, or it repeated one) |
+| Time | 29 s on average |
+
+The windows read wrong were read in a way that didn't change the plan (`by 12:00` read as from
+12:00, for a patient visited in time anyway); the nurse is expected to write windows plainly. Most
+of the wasted calls asked for travel times before every address was found. The results, one line
+per case, are in `evals/results/`.
+
 ## Commands
 
 Run from the project root, in the project's Python environment (`.venv`). The model runs in
@@ -238,6 +266,8 @@ Docker: start Docker, then the routers. The page needs [Node.js](https://nodejs.
 | The same, for a working day of at most 3.5 hours | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --work-hours 3.5` |
 | The same, driving | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --mode driving` |
 | Run the tests | `.venv/Scripts/python -m pytest` |
+| Run the evaluation (about 12 minutes), or only some cases | `.venv/Scripts/python -m evals.run`, `... --cases bay_ridge` |
+| See every case's answer key | `.venv/Scripts/python -m evals.keys` |
 
 ### Making the offline map
 
