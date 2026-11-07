@@ -73,6 +73,19 @@ class Result:
     reasons: str = ""  # why this plan, for the nurse, as the model wrote it
 
 
+def cells(csv_text: str) -> list[list[tuple[str, str]]]:
+    """Each patient's cells, as (column name, value): a cell without a column name is "column N",
+    an empty cell is "", and a cell of several lines is joined into one."""
+    table = [row for row in csv.reader(io.StringIO(csv_text.strip())) if any(cell.strip() for cell in row)]
+    if len(table) < 2:
+        raise ValueError("the patient list needs a header row and at least one patient")
+    header = table[0]
+    return [[(header[i].strip() if i < len(header) and header[i].strip() else f"column {i + 1}",
+              " ".join(row[i].split()) if i < len(row) else "")
+             for i in range(max(len(header), len(row)))]
+            for row in table[1:]]
+
+
 def numbered(csv_text: str) -> tuple[str, list[str]]:
     """The patient list as the model sees it, and the ids: one line per patient, with an id (P1,
     P2, ...) and each cell under its column's name, e.g. "P1: name: Ana; earliest: (empty)".
@@ -81,19 +94,12 @@ def numbered(csv_text: str) -> tuple[str, list[str]]:
     model still reads every cell itself; naming each one, and writing an empty one as (empty),
     only saves it counting commas: given the CSV as it is, it read "...,,12:00" (latest 12:00)
     as earliest 12:00, and a small change anywhere in the prompt could make it do so."""
-    table = [row for row in csv.reader(io.StringIO(csv_text.strip())) if any(cell.strip() for cell in row)]
-    if len(table) < 2:
-        raise ValueError("the patient list needs a header row and at least one patient")
-    ids = [f"P{number}" for number in range(1, len(table))]
-    header = table[0]
+    patients = cells(csv_text)
+    ids = [f"P{number}" for number in range(1, len(patients) + 1)]
     lines = []
-    for patient_id, row in zip(ids, table[1:]):
-        cells = []
-        for i in range(max(len(header), len(row))):
-            name = header[i].strip() if i < len(header) and header[i].strip() else f"column {i + 1}"
-            value = " ".join(row[i].split()) if i < len(row) else ""  # one line, whatever the cell holds
-            cells.append(f"{name}: {value or '(empty)'}")
-        lines.append(f"{patient_id}: {'; '.join(cells)}")
+    for patient_id, row in zip(ids, patients):
+        shown = "; ".join(f"{name}: {value or '(empty)'}" for name, value in row)
+        lines.append(f"{patient_id}: {shown}")
     return "\n".join(lines) + "\n", ids
 
 
@@ -107,13 +113,16 @@ def shown_window(earliest: str, latest: str) -> str:
 
 class Agent:
     def __init__(self, request: Request, ask=llm.ask, log=print, find=addresses.find,
-                 minutes=None):
+                 minutes=None, on_step=None):
         self.request, self.ask, self.log, self.find = request, ask, log, find
+        self.on_step = on_step  # called with each step's number and Step as soon as it is taken
         # Travel minutes between places, the way the nurse travels.
         self.minutes = minutes or (lambda places: travel.travel_minutes(places, request.mode))
         self.patient_list, self.ids = numbered(request.csv_text)
         self.rows = dict(zip(self.ids, self.patient_list.splitlines()))  # to show next to the windows read from them
         self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
+        # Each patient's window as the model last gave it, to best_plans or check_plan: for showing the plan.
+        self.windows: dict[str, tuple[str, str]] = {}
         # Each tool: what the model is told it does, the fields it fills in, and the code that runs it.
         # minItems keeps a list from being left empty: the model often wrote [] when unsure.
         self.tools = {
@@ -231,6 +240,7 @@ class Agent:
         if unread:
             return (f"Give a window for every patient on the list; missing: {', '.join(unread)}. "
                     "Leave earliest and latest empty where the list gives none."), False
+        self.windows.update(windows)
         try:
             found = solving.best_plans(self.ids, windows, self.minutes([self.found[p] for p in places]),
                                        self.request.rules)
@@ -252,6 +262,7 @@ class Agent:
         minutes = self.minutes([self.found[place] for place in places])
         legs = [minutes[places.index(start)][places.index(end)] for start, end in zip(stops, stops[1:])]
         windows = {window["patient"]: (window["earliest"], window["latest"]) for window in answer["windows"]}
+        self.windows.update(windows)
         return checking.check(order, windows, legs, self.request.rules).text, False
 
     def submit_plan(self, answer: dict) -> tuple[str, bool]:
@@ -260,7 +271,7 @@ class Agent:
 
     def run(self) -> Result:
         messages, steps, schema = self.first_messages(), [], self.schema()
-        self.order, self.reasons, self.found = [], "", {}
+        self.order, self.reasons, self.found, self.windows = [], "", {}, {}
         for number in range(1, MAX_STEPS + 1):
             try:
                 answer = self.ask(messages, schema, MAX_STEP_TOKENS)
@@ -273,6 +284,8 @@ class Agent:
             arguments = {name: value for name, value in answer.items() if name not in ("thinking", "action")}
             result, done = self.tools[action][2](answer)
             steps.append(Step(answer["thinking"], action, arguments, result))
+            if self.on_step:
+                self.on_step(number, steps[-1])
             shown_result = result.replace("\n", "\n       ")  # a result of several lines stays indented
             self.log(f"[{number}] {answer['thinking']}\n    -> {action} {json.dumps(arguments)}\n    <- {shown_result}")
             messages += [{"role": "assistant", "content": json.dumps(answer)},

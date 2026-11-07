@@ -25,6 +25,18 @@ def test_a_plan_without_problems_shows_the_day():
                            "Total: 2 visits, 30 min travel, 0 min waiting, working day 1 h 30 min.")
 
 
+def test_each_stop_is_given_as_data_too():
+    # P1 must start by 08:10, P2 not before 08:50: leaving 08:05, the nurse waits 5 minutes at P2.
+    p1, p2 = check(["P1", "P2"], {"P1": ("", "08:00"), "P2": ("09:00", "")}, [5, 5, 5], RULES).stops
+    assert (p1.patient, p1.travel, clock(p1.arrive), p1.wait, clock(p1.start), clock(p1.finish)) == (
+        "P1", 5, "08:10", 0, "08:10", "08:40")
+    assert (p2.patient, clock(p2.arrive), p2.wait, clock(p2.start), p2.earliest, p2.latest, p2.late) == (
+        "P2", "08:45", 5, "08:50", 540, None, False)
+    # The other way round, P1 starts 09:25, late.
+    _, p1 = check(["P2", "P1"], {"P1": ("", "08:00"), "P2": ("09:00", "")}, [5, 5, 5], RULES).stops
+    assert (p1.patient, clock(p1.start), p1.late) == ("P1", "09:25", True)
+
+
 def test_the_nurse_leaves_just_in_time_for_the_first_visit():
     result = check(["P1"], {"P1": ("10:00", "")}, [5, 5], RULES)
     assert "leave home 09:45" in result.text  # 10 minutes' slack, 5 minutes' walk

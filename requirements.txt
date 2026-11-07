@@ -2,3 +2,5 @@
 # Packages are added here as the steps that need them are built.
 
 pytest==9.2.0  # runs the tests
+fastapi==0.162.0  # the web service for the nurse's page
+uvicorn==0.54.0  # runs it

@@ -52,3 +52,16 @@ def test_each_way_of_travelling_has_its_own_router(monkeypatch):
     assert asked[0].startswith("http://localhost:5000/table/v1/car/")
     with pytest.raises(ValueError, match='no way of travelling called "flying"; there are walking, driving'):
         travel.travel_minutes(PLACES, "flying")
+
+
+def test_a_route_is_one_line_of_points_per_leg(monkeypatch):
+    leg = lambda *steps: {"steps": [{"geometry": {"coordinates": points}} for points in steps]}
+    asked = answer_with(monkeypatch, {"code": "Ok", "routes": [{"legs": [
+        leg([[-73.98, 40.62], [-73.985, 40.615]], [[-73.985, 40.615], [-73.99, 40.61]]),
+        leg([[-73.99, 40.61], [-73.98, 40.62]])]}]})
+    home_p1_home = PLACES + PLACES[:1]
+    assert travel.route(home_p1_home) == [
+        [[-73.98, 40.62], [-73.985, 40.615], [-73.99, 40.61]],  # a point where two steps meet is kept once
+        [[-73.99, 40.61], [-73.98, 40.62]]]
+    assert asked == ["http://localhost:5001/route/v1/foot/-73.98,40.62;-73.99,40.61;-73.98,40.62"
+                     "?overview=false&steps=true&geometries=geojson"]

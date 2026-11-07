@@ -15,3 +15,7 @@ tools/
 # Editor and local tool settings
 .idea/
 .claude/
+
+# The page's packages, and the page as built (npm install, npm run build)
+frontend/node_modules/
+frontend/dist/

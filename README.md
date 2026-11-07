@@ -7,7 +7,7 @@ little time on the road as possible.
 This project has a small language model make that plan, running entirely on the nurse's own
 computer, so patient addresses never leave it. The model reads the nurse's list, finds the
 addresses, and chooses the plan; a solver it can call works out the best orders, and code
-checks the plan.
+checks the plan. The nurse uses it from a web page with a map of the day, on the same computer.
 
 > Status: being rebuilt one step at a time. Patient data in this repository is made up.
 
@@ -91,7 +91,8 @@ one request. There is one router per way of travelling, each with its road netwo
 per starting place, e.g. `from home: P1 2, P2 3, P3 4`, in whole minutes.
 
 Driving times are OSRM's: no traffic, and no time to find a place to park, so they are too short
-for a city. From the home on 70th St, the patients in `examples/patients.csv` are 20-31 minutes
+for a city. For the map, the same router also gives the way along the streets for each leg of the
+plan (`travel.route`). From the home on 70th St, the patients in `examples/patients.csv` are 20-31 minutes
 away on foot and 3-6 by car.
 It gives no times until every place asked about has been found: given the other places' times,
 the model kept asking for travel times and never fixed the address that wasn't found.
@@ -163,16 +164,70 @@ plans for the wrong rules. So the answer shows each window the model gave next t
 line, for the model to compare. Trying every plan is exact, and takes about 2 seconds for 12
 patients; longer lists are refused.
 
+## The nurse's page
+
+The nurse plans from a web page that runs on their own computer: they choose the patient list,
+type their home address, pick walking or driving and how much work the day holds, and press
+*Plan tomorrow*. A plan takes 20-35 seconds, so the page shows each step as the model takes it:
+its thinking, the tool it used, and what the tool answered. When the model hands in its plan,
+the page shows the day: when to leave, each visit in order with its times and window, when the
+nurse is home, the model's reasons, and the patients not visited. Next to it, a map draws the
+route along the streets, with home, each visit numbered in order, and the patients not visited
+in grey.
+
+Nothing on the page leaves the computer. The planner is a web service, `homecare/web.py`
+(FastAPI), that listens on 127.0.0.1 only, and serves the page, the planner and the map:
+
+| Path | What |
+|---|---|
+| `POST /api/plan` | Plans tomorrow. The answer is a stream of Server-Sent Events: a `step` for each step the model takes, then `plan` (the schedule, the places, the route) or `error` |
+| `GET /api/examples` | The sample patient lists, each with a home to plan from |
+| `/map-data/...` | The map's streets, fonts and icons, from `data/map` |
+| `/` | The page, once built |
+
+The schedule on the page is the model's plan checked again, with the windows the model gave, by
+the same checker check_plan uses; the route is OSRM's, for the way the nurse travels. One plan is
+worked out at a time, since the model has one graphics card.
+
+The page itself is React, built with Vite, in `frontend/`.
+
+### An offline map
+
+The map is drawn with [MapLibre GL JS](https://maplibre.org) from a map file on this computer,
+not from map tiles on the internet: asking a tile server for the map around the nurse's patients
+would tell it where they are. The file, `data/map/nyc.pmtiles` (49 MB, kept out of the
+repository), holds the streets of Brooklyn and Manhattan, where the address index is, in
+[PMTiles](https://protomaps.com/docs/pmtiles) form: one file the page reads a piece at a time,
+with HTTP range requests. It was cut from [Protomaps](https://protomaps.com)' daily map of the
+world, which is made from [OpenStreetMap](https://www.openstreetmap.org/copyright) data; the
+map shows that credit. Its fonts and icons are in `data/map` too, and the map follows the
+computer's light or dark setting.
+
 ## Commands
 
 Run from the project root, in the project's Python environment (`.venv`). The model runs in
 [Ollama](https://ollama.com): install it, then `ollama pull llama3.1:8b`. The road routers run in
-Docker: start Docker, then the routers.
+Docker: start Docker, then the routers. The page needs [Node.js](https://nodejs.org) to build.
 
 | What | Command |
 |---|---|
 | Start the road routers, for walking and driving | `docker compose up -d` |
-| Plan tomorrow, showing every step | `.venv/Scripts/python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"` |
+| Build the page (once, and after changing it) | `cd frontend && npm install && npm run build` |
+| Start the planner and its page, then open http://127.0.0.1:8000 | `.venv/Scripts/python -m homecare.web` |
+| Work on the page, reloading as it changes (with the planner running), at http://127.0.0.1:5173 | `cd frontend && npm run dev` |
+| Plan tomorrow in the terminal, showing every step | `.venv/Scripts/python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"` |
 | The same, for a working day of at most 3.5 hours | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --work-hours 3.5` |
 | The same, driving | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --mode driving` |
 | Run the tests | `.venv/Scripts/python -m pytest` |
+
+### Making the offline map
+
+The map's files are downloaded once, into `data/map`:
+
+1. The map file. Download `pmtiles.exe` from the [go-pmtiles releases](https://github.com/protomaps/go-pmtiles/releases)
+   (into `tools/pmtiles`), and cut Brooklyn and Manhattan out of a daily Protomaps build (any date listed at
+   [maps.protomaps.com/builds](https://maps.protomaps.com/builds)). It reads only the part of the world file it needs:
+   `tools/pmtiles/pmtiles.exe extract https://build.protomaps.com/20261106.pmtiles data/map/nyc.pmtiles --bbox=-74.06,40.55,-73.83,40.89 --maxzoom=15`
+2. The fonts and icons, from [protomaps/basemaps-assets](https://github.com/protomaps/basemaps-assets): the folders
+   `fonts/Noto Sans Regular`, `fonts/Noto Sans Medium` and `fonts/Noto Sans Italic` into `data/map/fonts`, and
+   `sprites/v4/light*` and `sprites/v4/dark*` into `data/map/sprites/v4`.

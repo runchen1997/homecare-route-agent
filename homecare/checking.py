@@ -35,6 +35,23 @@ class Rules:
 
 
 @dataclasses.dataclass
+class Stop:
+    """One visit in the day, for showing the plan; times in minutes after midnight."""
+    patient: str
+    travel: int  # minutes from the place before
+    arrive: int
+    start: int
+    finish: int
+    earliest: int | None  # the patient's window as given; None where there is no limit
+    latest: int | None
+    late: bool  # starts later than the window and its slack allow
+
+    @property
+    def wait(self) -> int:
+        return self.start - self.arrive
+
+
+@dataclasses.dataclass
 class Check:
     text: str  # the day, step by step, and the problems: what the model is told
     problems: list[str]
@@ -42,6 +59,7 @@ class Check:
     waiting: int
     leave: int  # leaving home and getting back, in minutes after midnight
     back: int
+    stops: list[Stop]  # each visit, in order
 
 
 def minutes(clock_time: str) -> int:
@@ -120,7 +138,7 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
     leave = minutes(rules.day_start) + shift
     visits, back = day(leave)
 
-    lines, travelled, waited = [f"leave home {clock(leave)}"], 0, 0
+    lines, stops, travelled, waited = [f"leave home {clock(leave)}"], [], 0, 0
     for patient, leg, (arrive, start) in zip(order, legs, visits):
         earliest, latest = limits[patient]
         line = f"{patient}: travel {leg} min, arrive {clock(arrive)}"
@@ -139,6 +157,8 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
             problems.append(f"{patient} starts {start - latest - slack} min after its latest start "
                             f"({clock(latest + slack)}).")
         lines.append(line)
+        stops.append(Stop(patient, leg, arrive, start, start + rules.visit_minutes, earliest, latest,
+                          latest is not None and start > latest + slack))
         travelled, waited = travelled + leg, waited + start - arrive
     travelled += legs[-1]
     lines.append(f"travel {legs[-1]} min, back home {clock(back)}")
@@ -152,4 +172,4 @@ def check(order: list[str], windows: dict[str, tuple[str, str]], legs: list[int 
 
     header = "Plan check: OK." if not problems else f"Plan check: {len(problems)} problem{'s' * (len(problems) > 1)}."
     text = "\n".join([header, *lines, *(["Problems:", *(f"- {problem}" for problem in problems)] if problems else [])])
-    return Check(text, problems, travelled, waited, leave, back)
+    return Check(text, problems, travelled, waited, leave, back, stops)
