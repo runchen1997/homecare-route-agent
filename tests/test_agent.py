@@ -1,8 +1,11 @@
 """The agent loop, with a scripted stand-in for the language model."""
 
+import datetime
+
 import pytest
 
 from homecare import agent, llm
+from homecare.checking import Rules
 from homecare.addresses import AddressError, Place
 from homecare.agent import Agent, Request, numbered
 
@@ -203,9 +206,24 @@ def test_best_plans_need_every_address_and_every_window():
 
 def test_the_nurse_travels_the_way_the_request_says(monkeypatch):
     modes = []
-    monkeypatch.setattr(agent.travel, "travel_seconds", lambda places, mode: modes.append(mode) or seconds(places))
+    monkeypatch.setattr(agent.travel, "travel_seconds", lambda places, mode, day: modes.append(mode) or seconds(places))
     ask = scripted(look_up(P1="1 A St", home="9 Home St"), times("home", "P1"), submit(["P1"]))
     result = Agent(Request(CSV, "9 Home St", mode="driving"), ask, log=lambda *_: None, find=find).run()
     assert "The nurse travels by car." in ask.asked[0][0][1]["content"]
     assert modes == ["driving"]
     assert result.steps[1].result.startswith("Travel minutes (driving):")
+
+
+def test_by_subway_and_bus_the_times_are_for_the_day_planned(monkeypatch):
+    asked = []
+    monkeypatch.setattr(agent.travel, "travel_seconds",
+                        lambda places, mode, day: asked.append((mode, day)) or seconds(places))
+    request = Request(CSV, "9 Home St", Rules(day_start="09:00", day_end="15:30"), "transit", datetime.date(2026, 11, 9))
+    ask = scripted(look_up(P1="1 A St", home="9 Home St"), times("home", "P1"), submit(["P1"]))
+    Agent(request, ask, log=lambda *_: None, find=find).run()
+    assert "The nurse travels by subway and bus" in ask.asked[0][0][1]["content"]
+    assert asked == [("transit", (datetime.datetime(2026, 11, 9, 9, 0), datetime.datetime(2026, 11, 9, 15, 30)))]
+
+
+def test_the_day_planned_is_tomorrow_unless_said():
+    assert Request(CSV, "home").date == datetime.date.today() + datetime.timedelta(days=1)

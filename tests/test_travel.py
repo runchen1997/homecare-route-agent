@@ -1,5 +1,6 @@
 """Travel times from the road router, with a stand-in for its web service."""
 
+import datetime
 import io
 import json
 import urllib.error
@@ -65,3 +66,18 @@ def test_a_route_is_one_line_of_points_per_leg(monkeypatch):
         [[-73.99, 40.61], [-73.98, 40.62]]]
     assert asked == ["http://localhost:5001/route/v1/foot/-73.98,40.62;-73.99,40.61;-73.98,40.62"
                      "?overview=false&steps=true&geometries=geojson"]
+
+
+
+def test_by_subway_and_bus_the_times_come_from_r5_for_the_working_day(monkeypatch):
+    from homecare import transit
+    asked = []
+    monkeypatch.setattr(transit, "travel_seconds", lambda places, day: asked.append(day) or [[0, 600], [660, 0]])
+    day = travel.working_day(datetime.date(2026, 11, 9), "09:00", "16:00")
+    assert travel.travel_seconds(PLACES, "transit", day) == [[0, 600], [660, 0]]
+    assert asked == [(datetime.datetime(2026, 11, 9, 9, 0), datetime.datetime(2026, 11, 9, 16, 0))]
+    assert "transit" in travel.ALL_MODES
+
+
+def test_by_subway_and_bus_the_route_is_a_straight_line_for_now():
+    assert travel.route(PLACES, "transit") == [[[-73.98, 40.62], [-73.99, 40.61]]]

@@ -15,6 +15,7 @@ The lists differ in what they ask of the model's reading:
 
 import csv
 import dataclasses
+import datetime
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -56,6 +57,9 @@ LISTS = {
         found={"P4": "6901 3rd Ave, Brooklyn"}),
 }
 
+# The day every case is planned for, so that subway and bus times are the same from run to run: a Monday.
+DATE = datetime.date(2026, 11, 9)
+
 H70, H18 = "1025 70th St, Brooklyn", "6302 18th Ave, Brooklyn"
 UWS, BAY_RIDGE = "250 W 85th St, Manhattan", "7501 4th Ave, Brooklyn"
 
@@ -82,6 +86,7 @@ CASES = [
     Case("patients, at most 3 visits", "patients", H70, rules={"max_visits": 3}),
     Case("patients, back by 12:00", "patients", H70, rules={"day_end": "12:00"}),
     Case("patients, tightest group", "patients", H70, rules={"prefer": "tightest group"}),
+    Case("patients, subway and bus", "patients", H70, "transit"),
     Case("18th_avenue", "18th_avenue", H18),
     Case("18th_avenue, from 70th St, driving", "18th_avenue", H70, "driving"),
     Case("18th_avenue, from 70th St, driving, tightest group", "18th_avenue", H70, "driving",
@@ -94,10 +99,13 @@ CASES = [
     Case("upper_west_side, driving", "upper_west_side", UWS, "driving"),
     Case("upper_west_side, tightest group", "upper_west_side", UWS, rules={"prefer": "tightest group"}),
     Case("upper_west_side, at most 3 visits", "upper_west_side", UWS, rules={"max_visits": 3}),
+    Case("upper_west_side, subway and bus", "upper_west_side", UWS, "transit"),
     Case("upper_west_side, at most 2.5 hours", "upper_west_side", UWS, rules={"work_hours": 2.5}),
     Case("bay_ridge_messy", "bay_ridge_messy", BAY_RIDGE),
     Case("bay_ridge_messy, driving", "bay_ridge_messy", BAY_RIDGE, "driving"),
     Case("bay_ridge_messy, tightest group", "bay_ridge_messy", BAY_RIDGE, rules={"prefer": "tightest group"}),
     Case("bay_ridge_messy, back by 11:00", "bay_ridge_messy", BAY_RIDGE, rules={"day_end": "11:00"}),
     Case("bay_ridge_messy, at most 3 visits", "bay_ridge_messy", BAY_RIDGE, rules={"max_visits": 3}),
+    Case("bay_ridge_messy, subway and bus, tightest group", "bay_ridge_messy", BAY_RIDGE, "transit",
+         rules={"prefer": "tightest group"}),
 ]

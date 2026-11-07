@@ -94,5 +94,5 @@ def test_a_time_that_isnt_hh_mm_is_refused():
 
 
 def test_a_list_too_long_to_try_every_plan_is_refused():
-    with pytest.raises(ValueError, match="up to 12 patients; the list has 13"):
-        best_plans([f"P{i}" for i in range(13)], {}, [], TWO_VISITS)
+    with pytest.raises(ValueError, match="up to 15 patients; the list has 16"):
+        best_plans([f"P{i}" for i in range(16)], {}, [], TWO_VISITS)

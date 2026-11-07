@@ -5,6 +5,7 @@ road network built for it in data/osrm. One request to a router's table service 
 time from every place to every other place.
 """
 
+import datetime
 import json
 import urllib.error
 import urllib.request
@@ -16,12 +17,21 @@ MODES = {
     "walking": ("http://localhost:5001", "foot"),
     "driving": ("http://localhost:5000", "car"),
 }
+# Every way of travelling: the road routers', and the subway and bus (homecare.transit, R5 not OSRM).
+ALL_MODES = (*MODES, "transit")
+
+
+def working_day(day: datetime.date | None = None, start: str = "08:00", end: str = "17:00"):
+    """The working day, from `start` to `end` on `day` (tomorrow if None), as two datetimes."""
+    day = day or datetime.date.today() + datetime.timedelta(days=1)
+    clock = lambda text: datetime.datetime.combine(day, datetime.datetime.strptime(text.strip(), "%H:%M").time())
+    return clock(start), clock(end)
 
 
 def ask_router(service: str, places: list[Place], mode: str, options: str) -> dict:
     """Ask the router for `mode` its `service` (table, route) over `places`; its reply, if Ok."""
     if mode not in MODES:
-        raise ValueError(f'no way of travelling called "{mode}"; there are {", ".join(MODES)}')
+        raise ValueError(f'no way of travelling called "{mode}"; there are {", ".join(ALL_MODES)}')
     server, profile = MODES[mode]
     coordinates = ";".join(f"{place.lon},{place.lat}" for place in places)  # OSRM wants longitude first
     url = f"{server}/{service}/v1/{profile}/{coordinates}?{options}"
@@ -38,19 +48,30 @@ def ask_router(service: str, places: list[Place], mode: str, options: str) -> di
     return reply
 
 
-def travel_seconds(places: list[Place], mode: str = "walking") -> list[list[int | None]]:
+def travel_seconds(places: list[Place], mode: str = "walking", day=None) -> list[list[int | None]]:
     """seconds[i][j]: seconds from places[i] to places[j] by `mode`, rounded; None if there is no route.
+
+    day: the working day, (start, end) datetimes, for the subway and bus, whose times depend on when
+    and on what day the trip starts (homecare.transit); tomorrow, 08:00 to 17:00, if None. Walking
+    and driving times don't depend on it.
 
     Seconds, not minutes: a day's legs are added up, and comparing plans by legs each rounded to a
     minute ties plans that aren't equal (a 13-second drive counted as 0 minutes) and can pick a
     longer one. Driving times are OSRM's: no traffic, and no time to park."""
+    if mode == "transit":
+        from homecare import transit  # starts Java and R5 the first time: only for the nurse who travels this way
+        return transit.travel_seconds(places, day or working_day())
     reply = ask_router("table", places, mode, "annotations=duration")
     return [[None if seconds is None else round(seconds) for seconds in row] for row in reply["durations"]]
 
 
 def route(places: list[Place], mode: str = "walking") -> list[list[list[float]]]:
     """The way along the streets from each place to the next, in order: one line per leg, each a list
-    of [longitude, latitude] points (GeoJSON's order, as maps draw it)."""
+    of [longitude, latitude] points (GeoJSON's order, as maps draw it).
+
+    By subway and bus, for now, a straight line from each place to the next."""
+    if mode == "transit":
+        return [[[a.lon, a.lat], [b.lon, b.lat]] for a, b in zip(places, places[1:])]
     reply = ask_router("route", places, mode, "overview=false&steps=true&geometries=geojson")
     lines = []
     for leg in reply["routes"][0]["legs"]:

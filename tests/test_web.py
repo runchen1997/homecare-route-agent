@@ -19,7 +19,7 @@ def find(address):
     return PLACES[address]
 
 
-def seconds(places, mode):
+def seconds(places, mode, day=None):
     """Five minutes between any two different places."""
     return [[0 if a == b else 300 for b in places] for a in places]
 

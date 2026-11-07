@@ -83,8 +83,8 @@ longitude: how far apart places are is for travel_times to say.
 
 ## Travel times
 
-The nurse walks or drives (`--mode walking` or `--mode driving`; walking by default), and the
-model is told which. travel_times asks a road router, [OSRM](https://project-osrm.org), running
+The nurse walks, drives, or takes the subway and bus (`--mode walking`, `driving` or `transit`;
+walking by default), and the model is told which. On foot or by car, travel_times asks a road router, [OSRM](https://project-osrm.org), running
 locally in Docker, for the travel time from every place the model names to every other one, in
 one request. There is one router per way of travelling, each with its road network built in
 `data/osrm/walking` or `data/osrm/driving` (kept out of the repository). The model gets one line
@@ -101,6 +101,25 @@ plan (`travel.route`). From the home on 70th St, the patients in `examples/patie
 away on foot and 3-6 by car.
 It gives no times until every place asked about has been found: given the other places' times,
 the model kept asking for travel times and never fixed the address that wasn't found.
+
+### By subway and bus
+
+By subway and bus, the times come from [R5](https://github.com/conveyal/r5), Conveyal's routing
+engine for public transport, run through [r5py](https://r5py.readthedocs.io): the streets of
+Brooklyn and Manhattan with the MTA's subway and bus timetables (GTFS, in `data/gtfs`), walking to
+the stop, between stops and from the last one, or all the way where that is quicker. Ferries are
+never used. R5 runs in Java inside the planner, and starts only for a nurse who travels this way:
+the first time, building the network takes about 75 seconds, and it is kept in `data/r5` (900 MB)
+to read back in about 15 after that. Everything R5 writes goes there.
+
+How long a trip by subway and bus takes depends on when it starts: how long the wait for the next
+train or bus is. The planner uses typical times: for each pair of places, the median over
+departures through the nurse's working day, on the day planned for (tomorrow, or `--date`), since
+weekday and weekend timetables differ. Each table takes about 9 seconds. R5 gives whole minutes,
+and walks at the walking router's 5 km/h (its own is 3.6), so walking times are the same either way.
+From 70th St the patients in `examples/patients.csv` are 18-27 minutes away by subway and bus
+(19-39 on foot), and the Upper West Side 67 minutes (4 hours on foot). The timetables run to a last
+day (the buses' to 2 January 2027): a day after that is refused, with a note to download newer ones.
 
 ## Rules and checking a plan
 
@@ -180,8 +199,8 @@ P2: latest 12:00 | list: P2: name: Victor Huang; address: 1703 65th St, Brooklyn
 
 The plans are only as good as the model's reading: with a window misread, they are the best
 plans for the wrong rules. So the answer shows each window the model gave next to the list's own
-line, for the model to compare. Trying every plan is exact, and takes about 2 seconds for 12
-patients; longer lists are refused.
+line, for the model to compare. Trying every plan is exact, and takes about 3 seconds for 12
+patients and 14 for 15 (360,000 plans of 5 visits); longer lists are refused.
 
 ## The nurse's page
 
@@ -265,6 +284,7 @@ Docker: start Docker, then the routers. The page needs [Node.js](https://nodejs.
 | Plan tomorrow in the terminal, showing every step | `.venv/Scripts/python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"` |
 | The same, for a working day of at most 3.5 hours | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --work-hours 3.5` |
 | The same, driving | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --mode driving` |
+| The same, by subway and bus, on a given day | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --mode transit --date 2026-11-09` |
 | Run the tests | `.venv/Scripts/python -m pytest` |
 | Run the evaluation (about 12 minutes), or only some cases | `.venv/Scripts/python -m evals.run`, `... --cases bay_ridge` |
 | See every case's answer key | `.venv/Scripts/python -m evals.keys` |

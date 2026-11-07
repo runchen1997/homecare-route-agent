@@ -24,6 +24,7 @@ Run it (Ollama must be running):
 import argparse
 import csv
 import dataclasses
+import datetime
 import io
 import json
 
@@ -46,7 +47,9 @@ You work step by step. At each step, write your thinking, then choose one action
 Answer every step in JSON."""
 
 
-TRAVELS = {"walking": "on foot", "driving": "by car"}  # how the task says the nurse travels, by mode
+# How the task says the nurse travels, by mode.
+TRAVELS = {"walking": "on foot", "driving": "by car",
+           "transit": "by subway and bus, walking to the stop, between stops and from the last one"}
 
 
 @dataclasses.dataclass
@@ -54,7 +57,13 @@ class Request:
     csv_text: str  # the patient list, as the nurse wrote it
     home: str  # the nurse's home address, where the day starts and ends
     rules: checking.Rules = dataclasses.field(default_factory=checking.Rules)  # the user's, with defaults
-    mode: str = "walking"  # how the nurse gets around: one of travel.MODES
+    mode: str = "walking"  # how the nurse gets around: one of travel.ALL_MODES
+    # The day planned for: subway and bus times depend on it (weekday or weekend timetables). Tomorrow.
+    date: datetime.date = dataclasses.field(default_factory=lambda: datetime.date.today() + datetime.timedelta(days=1))
+
+    def day(self) -> tuple[datetime.datetime, datetime.datetime]:
+        """The working day, from the earliest the nurse leaves to the latest they're back."""
+        return travel.working_day(self.date, self.rules.day_start, self.rules.day_end)
 
 
 @dataclasses.dataclass
@@ -117,7 +126,7 @@ class Agent:
         self.request, self.ask, self.log, self.find = request, ask, log, find
         self.on_step = on_step  # called with each step's number and Step as soon as it is taken
         # Travel seconds between places, the way the nurse travels; the model is shown minutes.
-        self.seconds = seconds or (lambda places: travel.travel_seconds(places, request.mode))
+        self.seconds = seconds or (lambda places: travel.travel_seconds(places, request.mode, request.day()))
         self.patient_list, self.ids = numbered(request.csv_text)
         self.rows = dict(zip(self.ids, self.patient_list.splitlines()))  # to show next to the windows read from them
         self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
@@ -299,7 +308,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("csv", help="the patient list")
     parser.add_argument("--home", required=True, help="the nurse's home address")
-    parser.add_argument("--mode", choices=list(travel.MODES), default="walking", help="how the nurse gets around")
+    parser.add_argument("--mode", choices=list(travel.ALL_MODES), default="walking",
+                        help="how the nurse gets around: walking, driving, or transit (subway and bus, no ferries)")
+    parser.add_argument("--date", type=datetime.date.fromisoformat, default=None,
+                        help="the day to plan, as YYYY-MM-DD (tomorrow if left out); subway and bus times depend on it")
     default = checking.Rules()
     parser.add_argument("--day-start", default=default.day_start, help="leave home at this time at the earliest")
     parser.add_argument("--day-end", default=default.day_end, help="be back home by this time")
@@ -319,6 +331,8 @@ def main() -> None:
                            work_hours=args.work_hours, max_wait_minutes=args.max_wait, prefer=args.prefer)
     with open(args.csv, encoding="utf-8") as file:
         request = Request(file.read(), args.home, rules, args.mode)
+    if args.date:
+        request.date = args.date
     result = Agent(request).run()
     print(f"\n{result.ended} after {len(result.steps)} steps: {' -> '.join(result.order) or 'no plan'}")
     if result.reasons:

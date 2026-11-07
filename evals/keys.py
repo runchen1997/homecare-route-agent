@@ -13,7 +13,7 @@ import io
 import time
 
 from homecare import addresses, checking, solving, travel
-from evals.cases import CASES, LISTS, Case
+from evals.cases import CASES, DATE, LISTS, Case
 
 
 @dataclasses.dataclass
@@ -48,7 +48,9 @@ def setting(case: Case, seconds=travel.travel_seconds, find=addresses.find) -> S
     written = addresses_in(patients.text())
     ids = [f"P{i}" for i in range(1, len(written) + 1)]
     places = [find(case.home_address)] + [find(patients.found.get(p, address)) for p, address in zip(ids, written)]
-    return Setting(case, ids, patients.truth, checking.Rules(**case.rules), seconds(places, case.mode))
+    rules = checking.Rules(**case.rules)
+    day = travel.working_day(DATE, rules.day_start, rules.day_end)
+    return Setting(case, ids, patients.truth, rules, seconds(places, case.mode, day))
 
 
 def main() -> None:

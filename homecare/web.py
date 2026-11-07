@@ -42,7 +42,7 @@ DEFAULT_HOME = "1025 70th St, Brooklyn"
 class PlanRequest(BaseModel):
     csv: str  # the patient list, as the nurse wrote it
     home: str
-    mode: Literal[tuple(travel.MODES)] = "walking"
+    mode: Literal[tuple(travel.ALL_MODES)] = "walking"
     rules: checking.Rules = Field(default_factory=checking.Rules)  # any rule left out keeps its default
 
 
@@ -93,7 +93,7 @@ def create_app(ask=llm.ask, find=addresses.find, seconds=travel.travel_seconds, 
                page: pathlib.Path = PAGE, map_data: pathlib.Path = MAP_DATA) -> FastAPI:
     """The web service. The model, the address index and the road routers can be swapped for stand-ins.
 
-    seconds(places, mode) and route(places, mode) are as in homecare.travel. The page is served
+    seconds(places, mode, day) and route(places, mode) are as in homecare.travel. The page is served
     from `page` if it has been built, and the map's files from `map_data` if they are there."""
     app = FastAPI(title="Home-care route planner")
     app.state.busy = threading.Lock()  # held while a plan is being worked out
@@ -113,10 +113,10 @@ def create_app(ask=llm.ask, find=addresses.find, seconds=travel.travel_seconds, 
 
         def work() -> None:
             try:
-                by_mode = lambda places: seconds(places, request.mode)
+                plan_request = agent.Request(request.csv, request.home, request.rules, request.mode)  # for tomorrow
+                by_mode = lambda places: seconds(places, request.mode, plan_request.day())
                 planner = agent.Agent(
-                    agent.Request(request.csv, request.home, request.rules, request.mode), ask,
-                    log=lambda *_: None, find=find, seconds=by_mode,
+                    plan_request, ask, log=lambda *_: None, find=find, seconds=by_mode,
                     on_step=lambda number, step: events.put(("step", {"number": number, **dataclasses.asdict(step)})))
                 result = planner.run()
                 events.put(("plan", shown_plan(planner, result, by_mode, lambda places: route(places, request.mode))))

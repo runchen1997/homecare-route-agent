@@ -1,6 +1,6 @@
 """The evaluation cases: each list's true windows line up with the patients the model is shown."""
 
-from homecare import agent, checking
+from homecare import agent, checking, travel
 from homecare.addresses import Place
 from evals.cases import CASES, LISTS
 from evals.keys import addresses_in, setting
@@ -23,7 +23,7 @@ def test_every_case_names_a_list_and_rules_that_exist():
     for case in CASES:
         assert case.patients in LISTS, case.name
         checking.Rules(**case.rules)  # every rule named is a rule
-        assert case.mode in ("walking", "driving"), case.name
+        assert case.mode in travel.ALL_MODES, case.name
 
 
 def test_a_plan_is_checked_against_the_true_windows():
@@ -34,7 +34,7 @@ def test_a_plan_is_checked_against_the_true_windows():
         seen.append(address)
         return Place(address, 40.6, -74.0)
 
-    s = setting(case, seconds=lambda places, mode: [[0 if a is b else 300 for b in places] for a in places], find=find)
+    s = setting(case, seconds=lambda places, mode, day: [[0 if a is b else 300 for b in places] for a in places], find=find)
     assert seen[0] == "1025 70th St, Brooklyn" and len(seen) == 9  # home, then the 8 patients as written
     # True windows: P2 by 12:00, P3 from 13:00 (each with 10 minutes' slack). P2 first, then P3: the
     # nurse leaves late enough not to wait at P3's door, and P2 is still on time.
@@ -46,7 +46,7 @@ def test_a_plan_is_checked_against_the_true_windows():
 def test_an_address_the_list_writes_another_way_is_found_as_the_key_says():
     case = next(case for case in CASES if case.patients == "bay_ridge_messy")
     seen = []
-    setting(case, seconds=lambda places, mode: [[0] * len(places)] * len(places),
+    setting(case, seconds=lambda places, mode, day: [[0] * len(places)] * len(places),
             find=lambda address: seen.append(address) or Place(address, 40.6, -74.0))
     assert seen[4] == "6901 3rd Ave, Brooklyn"  # P4: "6901 Third Avenue, Bay Ridge" in the list
 
@@ -62,7 +62,7 @@ def scripted_run(order, windows, extra_steps=()):
 def messy_setting():
     case = next(case for case in CASES if case.name == "messy")
     # Five minutes between any two places, except P8, an hour from everywhere.
-    def seconds(places, mode):
+    def seconds(places, mode, day):
         return [[0 if a is b else (3600 if 8 in (i, j) else 300) for j, b in enumerate(places)]
                 for i, a in enumerate(places)]
     return setting(case, seconds=seconds, find=lambda address: Place(address, 40.6, -74.0))

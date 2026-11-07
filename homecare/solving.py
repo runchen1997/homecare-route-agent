@@ -7,7 +7,7 @@ depends on the nurse: the least travel can mean getting home hours later.
 
 It tries every order of up to the most visits allowed, checks each with checking.check, and
 keeps the most visits that any plan manages. That is exact, and fast enough for a nurse's list:
-for 12 patients and 5 visits it is about 95,000 plans.
+for 15 patients and 5 visits it is about 360,000 plans, some 14 seconds.
 """
 
 import dataclasses
@@ -15,7 +15,7 @@ import itertools
 
 from homecare import checking
 
-MAX_PATIENTS = 12  # more than this, and trying every plan would take too long
+MAX_PATIENTS = 15  # more than this, and trying every plan would take too long (15: about 14 s)
 
 # Each measure: what to make smallest first, then the others to break ties. The nurse's preference
 # (Rules.prefer) is one of the first two; best_plans puts it first.

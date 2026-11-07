@@ -25,7 +25,7 @@ import time
 
 from homecare import agent, checking
 from homecare.solving import MEASURES
-from evals.cases import CASES, LISTS, ROOT, Case
+from evals.cases import CASES, DATE, LISTS, ROOT, Case
 from evals.keys import Setting, setting
 
 RESULTS = ROOT / "evals" / "results"
@@ -117,7 +117,7 @@ def score(s: Setting, run: int, result: agent.Result, found: int, seconds_taken:
 
 def run_case(case: Case, run: int) -> Score:
     s = setting(case)
-    request = agent.Request(LISTS[case.patients].text(), case.home, s.rules, case.mode)
+    request = agent.Request(LISTS[case.patients].text(), case.home, s.rules, case.mode, DATE)
     planner = agent.Agent(request, log=lambda *_: None)
     started = time.time()
     try:
