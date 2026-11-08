@@ -57,13 +57,15 @@ export default function Schedule({ plan }) {
         {s.stops.map((stop, i) => {
           const patient = patients[stop.patient];
           return [
-            <li key={`${stop.patient}-leg`} className="leg">{stop.travel_minutes} min</li>,
+            <Leg key={`${stop.patient}-leg`} minutes={stop.travel_minutes} trip={plan.transit?.[i]}
+                 why={plan.transit_why?.[i]} />,
             <li key={stop.patient} className={`visit${stop.late ? " late" : ""}`}>
               <span className="time">{stop.start}</span>
               <span className="badge">{i + 1}</span>
               <div>
                 <div className="visit-name">{patientName(patient)} <small>{stop.patient}</small></div>
                 <div className="visit-address">{patient.place?.address}</div>
+                {patient.place?.note && <div className="visit-note">{patient.place.note}</div>}
                 <div className="visit-times">
                   {stop.start}–{stop.finish} · window {windowText(stop.earliest, stop.latest)}
                   {stop.wait_minutes > 0 && ` · arrive ${stop.arrive}, wait ${stop.wait_minutes} min`}
@@ -73,7 +75,8 @@ export default function Schedule({ plan }) {
             </li>,
           ];
         })}
-        <li className="leg">{s.travel_home_minutes} min</li>
+        <Leg minutes={s.travel_home_minutes} trip={plan.transit?.[s.stops.length]}
+             why={plan.transit_why?.[s.stops.length]} />
         <li className="home-stop"><span className="time">{s.back}</span>Back home</li>
       </ol>
 
@@ -82,11 +85,39 @@ export default function Schedule({ plan }) {
           <h3>Not visited tomorrow</h3>
           <ul>
             {notVisited.map((patient) => (
-              <li key={patient.id}>{patientName(patient)} <small>{patient.id}</small></li>
+              <li key={patient.id}>
+                {patientName(patient)} <small>{patient.id}{!patient.place && " · address not found"}</small>
+              </li>
             ))}
           </ul>
         </section>
       )}
     </div>
+  );
+}
+
+// The travel between two places. By subway and bus, also the way to go: the quickest at the time the
+// nurse sets off, as an example (the times above are typical ones, so it can take a little more or less).
+function Leg({ minutes, trip, why }) {
+  if (!trip) return <li className="leg">{minutes} min</li>;
+  return (
+    <li className="leg">
+      <span>{minutes} min typical</span>
+      <ol className="trip" aria-label="For example">
+        {trip.map((part, i) =>
+          part.mode === "walk" ? (
+            <li key={i} className="walk">Walk {part.minutes} min</li>
+          ) : (
+            <li key={i}>
+              <span className="route" style={{ background: part.color ?? undefined, color: part.text_color ?? undefined }}>
+                {part.route}
+              </span>
+              {" "}{part.depart} {part.start} → {part.end}, {part.minutes} min
+            </li>
+          ),
+        )}
+      </ol>
+      {why && <p className="trip-why">{why}</p>}
+    </li>
   );
 }

@@ -15,6 +15,7 @@ Run it (Ollama and the road routers must be running):
 """
 
 import dataclasses
+import datetime
 import json
 import pathlib
 import queue
@@ -26,7 +27,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from homecare import addresses, agent, checking, llm, travel
+from homecare import addresses, agent, checking, judging, llm, travel
 
 HOST, PORT = "127.0.0.1", 8000
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -47,14 +48,18 @@ class PlanRequest(BaseModel):
 
 
 def shown_place(place: addresses.Place | None) -> dict | None:
-    return None if place is None else {"address": place.display, "lon": place.lon, "lat": place.lat}
+    if place is None:
+        return None
+    return {"address": place.display, "lon": place.lon, "lat": place.lat, **({"note": place.note} if place.note else {})}
 
 
-def shown_plan(planner: agent.Agent, result: agent.Result, seconds, route) -> dict:
+def shown_plan(planner: agent.Agent, result: agent.Result, seconds, route, itineraries=None) -> dict:
     """What the page shows once the model is done: every patient, and the plan the model submitted,
     checked against the windows it gave, with the route along the streets.
 
-    seconds(places) and route(places) are travel times and the route's lines, the way the nurse travels."""
+    seconds(places) and route(places) are travel times and the route's lines, the way the nurse travels.
+    By subway and bus, itineraries(legs) gives each leg's segments instead (homecare.transit.itineraries):
+    the quickest way at the time the nurse sets off on it."""
     found = planner.found
     plan = {
         "ended": result.ended,
@@ -65,6 +70,8 @@ def shown_plan(planner: agent.Agent, result: agent.Result, seconds, route) -> di
                      for patient_id, row in zip(planner.ids, agent.cells(planner.request.csv_text))],
         "schedule": None,
         "route": [],
+        "transit": None,  # by subway and bus: each leg's segments
+        "transit_why": None,  # and why that way, where the model weighed minutes against walking
     }
     stops = ["home", *result.order, "home"]
     if not result.order or any(place not in found for place in stops):
@@ -85,15 +92,37 @@ def shown_plan(planner: agent.Agent, result: agent.Result, seconds, route) -> di
                    "latest": None if stop.latest is None else clock(stop.latest), "late": stop.late}
                   for stop in check.stops],
     }
-    plan["route"] = route(places)
+    if planner.request.mode == "transit" and itineraries is not None:
+        # Each leg sets off when the nurse leaves home, or finishes the visit before it.
+        sets_off = [check.leave, *(stop.finish for stop in check.stops)]
+        when = lambda seconds_after_midnight: (datetime.datetime.combine(planner.request.date, datetime.time())
+                                               + datetime.timedelta(seconds=seconds_after_midnight))
+        trips = itineraries([(start, end, when(t)) for start, end, t in zip(places, places[1:], sets_off)])
+        plan["transit"] = [trip["segments"] for trip in trips]
+        plan["transit_why"] = [trip["why"] for trip in trips]
+        plan["route"] = [[point for segment in trip["segments"] for point in segment["line"]] for trip in trips]
+    else:
+        plan["route"] = route(places)
     return plan
 
 
+def transit_itineraries(legs):
+    """Each leg's way by subway, bus and walking, the model weighing extra minutes against walking saved."""
+    from homecare import transit  # Java and R5 start only for a nurse who travels by subway and bus
+
+    def worth(quickest, fewer_km):
+        return judging.put_up_with(quickest["walk_minutes"], quickest["walk_km"], fewer_km,
+                                   all_the_way=not quickest["rides"])
+    return transit.itineraries(legs, worth)
+
+
 def create_app(ask=llm.ask, find=addresses.find, seconds=travel.travel_seconds, route=travel.route,
-               page: pathlib.Path = PAGE, map_data: pathlib.Path = MAP_DATA) -> FastAPI:
+               page: pathlib.Path = PAGE, map_data: pathlib.Path = MAP_DATA,
+               itineraries=transit_itineraries) -> FastAPI:
     """The web service. The model, the address index and the road routers can be swapped for stand-ins.
 
-    seconds(places, mode, day) and route(places, mode) are as in homecare.travel. The page is served
+    seconds(places, mode, day) and route(places, mode) are as in homecare.travel, itineraries(legs) as in
+    homecare.transit. The page is served
     from `page` if it has been built, and the map's files from `map_data` if they are there."""
     app = FastAPI(title="Home-care route planner")
     app.state.busy = threading.Lock()  # held while a plan is being worked out
@@ -119,7 +148,8 @@ def create_app(ask=llm.ask, find=addresses.find, seconds=travel.travel_seconds, 
                     plan_request, ask, log=lambda *_: None, find=find, seconds=by_mode,
                     on_step=lambda number, step: events.put(("step", {"number": number, **dataclasses.asdict(step)})))
                 result = planner.run()
-                events.put(("plan", shown_plan(planner, result, by_mode, lambda places: route(places, request.mode))))
+                events.put(("plan", shown_plan(planner, result, by_mode, lambda places: route(places, request.mode),
+                                               itineraries)))
             except Exception as problem:  # anything at all: the page must hear of it, not wait forever
                 events.put(("error", {"message": str(problem)}))
             finally:

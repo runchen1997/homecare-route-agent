@@ -121,6 +121,22 @@ From 70th St the patients in `examples/patients.csv` are 18-27 minutes away by s
 (19-39 on foot), and the Upper West Side 67 minutes (4 hours on foot). The timetables run to a last
 day (the buses' to 2 January 2027): a day after that is refused, with a note to download newer ones.
 
+On the page, each leg of the day also shows a way to go: the quickest R5 finds at the time the nurse
+sets off on it (when they leave home, or finish the visit before), segment by segment, with each
+train and bus's route, stops and time (`Walk 4 min · N 13:34 18 Av → Fort Hamilton Pkwy, 4 min ·
+Walk 11 min`); on the map, walking is dashed and each train or bus is drawn in its route's colour
+from the timetable. It is an example: the day is planned with the typical times, so the way shown can
+take a little more or less. Working it out takes about 2 seconds a leg, once the plan is in.
+
+The quickest way isn't always the one to take: with an equipment bag, a bus a minute or two slower
+can be worth a long walk saved, and one far slower for a few steps isn't. Code keeps the ways no
+other beats on both time and walking; where more than one is left, the model judges, asked only
+how many extra minutes the nurse would put up with, at most, to walk so much less (code compares
+that with the real extra minutes; `homecare/judging.py`). Asked instead to choose between the ways,
+llama3.1:8b took the bus every time, even 18 minutes slower to save 0.1 km, or chose by where a way
+was in the list; asked for the value, it was right in 40 of 40 clear cases. The page shows why:
+`2 min longer than the quickest way, 0.5 km less walking: worth up to 3 min to the nurse`.
+
 ## Rules and checking a plan
 
 The rules are the user's, with defaults, and the model is told the same rules check_plan uses:

@@ -32,6 +32,9 @@ from homecare import addresses, checking, llm, solving, travel
 
 MAX_STEPS = 20  # steps the model may take before it is stopped
 MAX_STEP_TOKENS = 600  # the longest one step's answer may be
+# A patient whose address isn't found after this many tries is left out of the plan. Not after one:
+# a first try often fails on how the list writes it ("53th st"), and is fixed by the next.
+TRIES = 2
 
 SYSTEM_PROMPT = """\
 You are a planning agent for a home-care nurse. You plan tomorrow's visits: which patients to
@@ -130,6 +133,7 @@ class Agent:
         self.patient_list, self.ids = numbered(request.csv_text)
         self.rows = dict(zip(self.ids, self.patient_list.splitlines()))  # to show next to the windows read from them
         self.found: dict[str, addresses.Place] = {}  # each place found so far: a patient's id, or "home"
+        self.failed: dict[str, int] = {}  # each place not found yet: how many tries failed
         # Each patient's window as the model last gave it, to best_plans or check_plan: for showing the plan.
         self.windows: dict[str, tuple[str, str]] = {}
         # Each tool: what the model is told it does, the fields it fills in, and the code that runs it.
@@ -217,18 +221,37 @@ class Agent:
         for item in answer["places"]:
             try:
                 self.found[item["place"]] = place = self.find(item["address"])
-                lines.append(f"{item['place']}: found {place.display}")
+                self.failed.pop(item["place"], None)
+                lines.append(f"{item['place']}: found {place.display}" + (f" ({place.note})" if place.note else ""))
             except addresses.AddressError as problem:
+                if item["place"] not in self.found:
+                    self.failed[item["place"]] = self.failed.get(item["place"], 0) + 1
                 lines.append(f"{item['place']}: {problem}")
         return "\n".join(lines), False
 
+    def given_up(self, place: str) -> bool:
+        """A patient whose address wasn't found after TRIES tries: left out of the plan. Never home."""
+        return place != "home" and place not in self.found and self.failed.get(place, 0) >= TRIES
+
+    def to_find(self, places) -> list[str]:
+        """Of `places`, those not found yet and not given up: to try (again) with find_address."""
+        return [place for place in dict.fromkeys(places) if place not in self.found and not self.given_up(place)]
+
+    def left_out(self, places) -> str:
+        """A line saying which of `places` are left out, or "" if none are."""
+        out = [place for place in dict.fromkeys(places) if self.given_up(place)]
+        return (f"Left out, their address not found after {TRIES} tries: {', '.join(out)}. "
+                "No plan can visit them.") if out else ""
+
     def travel_times(self, answer: dict) -> tuple[str, bool]:
         asked = list(dict.fromkeys(answer["between"]))  # each place once, in the order asked
-        # No times until every place asked about is found: given the others' times, the model went on
-        # asking for travel times again and again, and never fixed the address that wasn't found.
-        missing = [place for place in asked if place not in self.found]
+        # No times until every place asked about is found, or given up: given the others' times, the model
+        # went on asking for travel times again and again, and never fixed the address that wasn't found.
+        missing = self.to_find(asked)
         if missing:
             return f"Find these addresses first, with find_address: {', '.join(missing)}.", False
+        left_out = self.left_out(asked)
+        asked = [place for place in asked if place in self.found]
         if len(asked) < 2:
             return "Travel times need at least two different places.", False
         seconds = self.seconds([self.found[place] for place in asked])
@@ -237,13 +260,14 @@ class Agent:
             legs = [f"{end} {'no route' if seconds[i][j] is None else checking.shown(seconds[i][j])}"
                     for j, end in enumerate(asked) if j != i]
             lines.append(f"from {start}: {', '.join(legs)}")
-        return "\n".join(lines), False
+        return "\n".join(lines + ([left_out] if left_out else [])), False
 
     def best_plans(self, answer: dict) -> tuple[str, bool]:
-        places = ["home", *self.ids]
-        missing = [place for place in places if place not in self.found]
+        missing = self.to_find(["home", *self.ids])
         if missing:
             return f"Find these addresses first, with find_address: {', '.join(missing)}.", False
+        visitable = [p for p in self.ids if p in self.found]  # every patient, but those left out
+        places = ["home", *visitable]
         windows = {w["patient"]: (w["earliest"].strip(), w["latest"].strip()) for w in answer["windows"]}
         unread = [patient for patient in self.ids if patient not in windows]
         if unread:
@@ -251,12 +275,14 @@ class Agent:
                     "Leave earliest and latest empty where the list gives none."), False
         self.windows.update(windows)
         try:
-            found = solving.best_plans(self.ids, windows, self.seconds([self.found[p] for p in places]),
-                                       self.request.rules)
+            found = solving.best_plans(visitable, {p: windows[p] for p in visitable},
+                                       self.seconds([self.found[p] for p in places]), self.request.rules)
         except ValueError as problem:
             return str(problem), False
         # The windows the plans were worked out with, next to the list's own lines, so a misread shows.
-        lines = [solving.describe(found), "Windows you gave, next to each patient's line in the list:"]
+        left_out = self.left_out(self.ids)
+        lines = [solving.describe(found), *([left_out] if left_out else []),
+                 "Windows you gave, next to each patient's line in the list:"]
         lines += [f"{p}: {shown_window(*windows[p])} | list: {self.rows[p]}" for p in self.ids]
         lines.append("If a window is wrong, call best_plans again with it fixed.")
         return "\n".join(lines), False
@@ -264,7 +290,9 @@ class Agent:
     def check_plan(self, answer: dict) -> tuple[str, bool]:
         order = answer["order"]
         stops = ["home", *order, "home"]
-        missing = [place for place in dict.fromkeys(stops) if place not in self.found]
+        if self.left_out(order):
+            return self.left_out(order) + " Take them out of the plan.", False
+        missing = self.to_find(stops)
         if missing:
             return f"Find these addresses first, with find_address: {', '.join(missing)}.", False
         places = list(dict.fromkeys(stops))
@@ -280,7 +308,7 @@ class Agent:
 
     def run(self) -> Result:
         messages, steps, schema = self.first_messages(), [], self.schema()
-        self.order, self.reasons, self.found, self.windows = [], "", {}, {}
+        self.order, self.reasons, self.found, self.windows, self.failed = [], "", {}, {}, {}
         for number in range(1, MAX_STEPS + 1):
             try:
                 answer = self.ask(messages, schema, MAX_STEP_TOKENS)

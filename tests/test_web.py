@@ -135,3 +135,32 @@ def test_the_map_files_are_served_a_piece_at_a_time(tmp_path):
     client = TestClient(create_app(scripted(), find, seconds, route, page=tmp_path / "none", map_data=tmp_path))
     piece = client.get("/map-data/nyc.pmtiles", headers={"Range": "bytes=10-19"})
     assert (piece.status_code, piece.content) == (206, bytes(range(10, 20)))
+
+
+def test_by_subway_and_bus_each_leg_comes_with_its_segments():
+    asked = []
+
+    def itineraries(legs):
+        asked.extend(legs)
+        return [{"segments": [{"mode": "walk", "minutes": 5, "line": [[start.lon, start.lat], [end.lon, end.lat]]}],
+                 "why": "the only way worth considering" if i == 0 else ""} for i, (start, end, _) in enumerate(legs)]
+
+    app = create_app(scripted(LOOK_UP, BEST, SUBMIT), find, seconds, route, itineraries=itineraries)
+    plan = events(post(app, mode="transit", rules={"max_visits": 2}))[-1][1]
+    # Each leg sets off when the nurse leaves home (08:00), then when each visit finishes (08:35, 09:10).
+    assert [when.strftime("%H:%M") for _, _, when in asked] == ["08:00", "08:35", "09:10"]
+    assert len(plan["transit"]) == 3 and plan["transit"][0][0]["mode"] == "walk"
+    assert plan["transit_why"] == ["the only way worth considering", "", ""]
+    assert plan["route"][0] == [[-73.9, 40.9], [-73.1, 40.1]]  # the map's line: the segments' points, home to P1
+
+
+def test_walking_and_driving_have_no_transit_segments():
+    plan = events(post(create_app(scripted(LOOK_UP, BEST, SUBMIT), find, seconds, route), mode="walking"))[-1][1]
+    assert plan["transit"] is None
+
+
+def test_a_place_found_at_a_nearby_number_says_so_to_the_page():
+    from homecare.web import shown_place
+    assert shown_place(Place("715 58th Street", 40.6, -74.0, "717 isn't on 58th Street; ...")) == {
+        "address": "715 58th Street", "lon": -74.0, "lat": 40.6, "note": "717 isn't on 58th Street; ..."}
+    assert "note" not in shown_place(Place("715 58th Street", 40.6, -74.0))

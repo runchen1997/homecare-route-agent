@@ -85,7 +85,7 @@ export default function PlanForm({ onSubmit, running }) {
 
       <section>
         <h2>Getting around</h2>
-        <Choice name="mode" value={mode} onChange={setMode} options={[["walking", "Walking"], ["driving", "Driving"]]} />
+        <Choice name="mode" value={mode} onChange={setMode} options={[["walking", "Walking"], ["driving", "Driving"], ["transit", "Subway & bus"]]} />
       </section>
 
       <section>

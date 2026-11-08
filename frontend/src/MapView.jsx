@@ -37,29 +37,48 @@ const flavor = () => (dark.matches ? "dark" : "light");
 const ROUTE_COLOR = { light: "#0f766e", dark: "#2dd4bf" };
 
 // The route along the streets, one line per leg, drawn over the streets (again after the style changes).
+// By subway and bus, one line per segment: walking dashed, each train or bus in its route's colour.
+function features(plan) {
+  if (plan.transit) {
+    return plan.transit.flatMap((trip, leg) =>
+      trip.filter((part) => part.line.length > 1).map((part) => ({
+        type: "Feature",
+        properties: { leg, mode: part.mode, color: part.color ?? null },
+        geometry: { type: "LineString", coordinates: part.line },
+      })),
+    );
+  }
+  return plan.route.map((line, leg) => ({
+    type: "Feature",
+    properties: { leg, mode: "street" },
+    geometry: { type: "LineString", coordinates: line },
+  }));
+}
+
 function drawRoute(map, plan) {
-  for (const id of ["route-line", "route-casing"]) if (map.getLayer(id)) map.removeLayer(id);
+  for (const id of ["route-ride", "route-walk", "route-line", "route-casing"]) if (map.getLayer(id)) map.removeLayer(id);
   if (map.getSource("route")) map.removeSource("route");
   if (!plan?.route.length) return;
-  map.addSource("route", {
-    type: "geojson",
-    data: {
-      type: "FeatureCollection",
-      features: plan.route.map((line, leg) => ({
-        type: "Feature",
-        properties: { leg },
-        geometry: { type: "LineString", coordinates: line },
-      })),
-    },
-  });
+  map.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: features(plan) } });
   const lineJoin = { "line-join": "round", "line-cap": "round" };
+  const walk = ["==", ["get", "mode"], "walk"];
   map.addLayer({
-    id: "route-casing", type: "line", source: "route", layout: lineJoin,
+    id: "route-casing", type: "line", source: "route", layout: lineJoin, filter: ["!", walk],
     paint: { "line-color": flavor() === "dark" ? "#0b0f14" : "#ffffff", "line-width": 8, "line-opacity": 0.9 },
   });
   map.addLayer({
-    id: "route-line", type: "line", source: "route", layout: lineJoin,
+    id: "route-line", type: "line", source: "route", layout: lineJoin, filter: ["==", ["get", "mode"], "street"],
     paint: { "line-color": ROUTE_COLOR[flavor()], "line-width": 4.5 },
+  });
+  map.addLayer({
+    id: "route-walk", type: "line", source: "route", filter: walk,
+    layout: { "line-join": "round" },
+    paint: { "line-color": flavor() === "dark" ? "#c8ced8" : "#5d6778", "line-width": 3, "line-dasharray": [1, 1.5] },
+  });
+  map.addLayer({
+    id: "route-ride", type: "line", source: "route", layout: lineJoin,
+    filter: ["all", ["!", walk], ["!=", ["get", "mode"], "street"]],
+    paint: { "line-color": ["coalesce", ["get", "color"], ROUTE_COLOR[flavor()]], "line-width": 5 },
   });
 }
 
@@ -96,7 +115,7 @@ function markersFor(plan) {
     const stop = stops[id];
     const when = stop ? `${stop.start}–${stop.finish}${stop.late ? " (late)" : ""}` : "";
     markers.push(marker(stop?.late ? "visit late" : "visit", String(i + 1), patient.place,
-                        [`${i + 1}. ${patientName(patient)}`, patient.place.address, when]));
+                        [`${i + 1}. ${patientName(patient)}`, patient.place.address, when, patient.place.note].filter(Boolean)));
   });
   if (plan.home) {
     const times = plan.schedule ? `Leave ${plan.schedule.leave}, back ${plan.schedule.back}` : "";

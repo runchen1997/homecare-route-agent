@@ -227,3 +227,24 @@ def test_by_subway_and_bus_the_times_are_for_the_day_planned(monkeypatch):
 
 def test_the_day_planned_is_tomorrow_unless_said():
     assert Request(CSV, "home").date == datetime.date.today() + datetime.timedelta(days=1)
+
+
+def test_a_patient_whose_address_isnt_found_after_two_tries_is_left_out():
+    # The stand-in finds 1 A St and 9 Home St, never Bo's 2 B St.
+    a, _ = make(look_up(P1="1 A St", P2="2 B St", home="9 Home St"), best(P1=("", ""), P2=("", "")),
+                look_up(P2="2 B Street"), times("home", "P1", "P2"), best(P1=("", ""), P2=("", "")),
+                check_plan(["P1", "P2"], P1=("", ""), P2=("", "")), submit(["P1"]))
+    steps = a.run().steps
+    left_out = "Left out, their address not found after 2 tries: P2. No plan can visit them."
+    assert steps[1].result == "Find these addresses first, with find_address: P2."  # one try isn't enough
+    assert steps[3].result == f"Travel minutes (walking):\nfrom home: P1 8\nfrom P1: home 8\n{left_out}"
+    assert steps[4].result.startswith("Best plans with 1 visit") and left_out in steps[4].result
+    assert steps[5].result == left_out + " Take them out of the plan."
+
+
+def test_the_model_is_told_when_a_nearby_house_number_was_used():
+    note = "717 isn't on 58th Street; 715, the nearest on the same side, is used"
+    places = {"717 58th St": Place("715 58th Street, Brooklyn 11220", 40.6, -74.0, note)}
+    a = Agent(Request(CSV, "home"), scripted(look_up(P1="717 58th St"), submit(["P1"])), log=lambda *_: None,
+              find=lambda address: places[address], seconds=seconds)
+    assert a.run().steps[0].result == f"P1: found 715 58th Street, Brooklyn 11220 ({note})"

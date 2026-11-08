@@ -69,7 +69,8 @@ def route(places: list[Place], mode: str = "walking") -> list[list[list[float]]]
     """The way along the streets from each place to the next, in order: one line per leg, each a list
     of [longitude, latitude] points (GeoJSON's order, as maps draw it).
 
-    By subway and bus, for now, a straight line from each place to the next."""
+    By subway and bus, a straight line from each place to the next: the page draws each leg's way by
+    train, bus and on foot from homecare.transit.itineraries instead."""
     if mode == "transit":
         return [[[a.lon, a.lat], [b.lon, b.lat]] for a, b in zip(places, places[1:])]
     reply = ask_router("route", places, mode, "overview=false&steps=true&geometries=geojson")
