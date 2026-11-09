@@ -8,6 +8,8 @@ The lists differ in what they ask of the model's reading:
 - patients, 18th_avenue: earliest and latest columns, HH:MM
 - messy: one When column, written any way ("before noon", "after 1pm")
 - upper_west_side: Manhattan, one Window column ("09:00-11:00", "from 13:00", "by 12:00")
+- sunset_park: 15 patients; addresses written "728 53th st,bk" and "618 58th st. bk", and "717 58th st, bk",
+  a house number the street doesn't have (the nearest, 715, is used)
 - bay_ridge_messy: columns in another order, times in a notes column with other notes ("call
   first; between 1 and 3pm"), and an address the index can't find as written
   ("6901 Third Avenue, Bay Ridge"; it is 6901 3rd Ave, Brooklyn)
@@ -44,6 +46,7 @@ def from_columns(path: str) -> PatientList:
 LISTS = {
     "patients": from_columns("examples/patients.csv"),
     "18th_avenue": from_columns("examples/18th_avenue.csv"),
+    "sunset_park": from_columns("examples/sunset_park.csv"),
     "messy": PatientList("examples/messy.csv", {
         "P1": NONE, "P2": ("", "12:00"), "P3": ("13:00", ""), "P4": NONE,
         "P5": NONE, "P6": ("10:00", "15:00"), "P7": NONE, "P8": NONE}),
@@ -108,4 +111,7 @@ CASES = [
     Case("bay_ridge_messy, at most 3 visits", "bay_ridge_messy", BAY_RIDGE, rules={"max_visits": 3}),
     Case("bay_ridge_messy, subway and bus, tightest group", "bay_ridge_messy", BAY_RIDGE, "transit",
          rules={"prefer": "tightest group"}),
+    Case("sunset_park", "sunset_park", H70),
+    Case("sunset_park, driving", "sunset_park", H70, "driving"),
+    Case("sunset_park, subway and bus", "sunset_park", H70, "transit"),
 ]

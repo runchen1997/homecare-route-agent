@@ -259,42 +259,127 @@ computer's light or dark setting.
 
 ## Evaluation
 
-`evals/` runs the planner on a fixed set of 24 cases and scores every plan the same way. The cases
-use five patient lists: the three in `examples/`, one in Manhattan with each window in a single
-column (`09:00-11:00`, `by 12:00`), and one in Bay Ridge with the columns in another order, the
-times among other notes (`call first; between 1 and 3pm`), and an address the index can't find as
-written (`6901 Third Avenue, Bay Ridge`). Across them the cases change how home is written,
-walking or driving, the workload (most visits, longest day, back by a time) and the nurse's
-preference.
+`evals/` runs the planner on a fixed set of 30 cases and scores every plan the same way. The cases
+use six patient lists: three in `examples/` that differ in how they write windows, one in Manhattan
+with each window in a single column (`09:00-11:00`, `by 12:00`), one in Bay Ridge with the columns
+in another order, the times among other notes (`call first; between 1 and 3pm`), and an address the
+index can't find as written (`6901 Third Avenue, Bay Ridge`), and one of 15 patients in Sunset Park,
+with addresses written `728 53th st,bk` and a house number the street doesn't have. Across them the
+cases change how home is written, walking, driving or subway and bus, the workload (most visits,
+longest day, back by a time) and the nurse's preference. Every case is planned for the same Monday,
+so subway and bus times don't change from run to run.
 
 Each list comes with its true windows, and each case's answer key is worked out by best_plans
 with those, not with the model's reading: the plan best by the nurse's preference, in seconds.
 The model's plan is then checked against the true windows, and scored apart on each count:
 
-| Count | First run (24 cases, llama3.1:8b) |
+| Count | Latest run (30 cases, llama3.1:8b) |
 |---|---|
-| The best plan, by the nurse's preference | 24/24 |
-| Fits the rules, with the true windows | 24/24 |
-| Every address found | 24/24 |
-| Every window read as the list means it | 19/24 (214 of 220 windows) |
-| Steps | 5.8 on average; 13 wasted in all (a tool refused the call, or it repeated one) |
-| Time | 29 s on average |
+| The best plan, by the nurse's preference | 30/30 |
+| Fits the rules, with the true windows | 30/30 |
+| Every address found | 30/30 |
+| Every window read as the list means it | 25/30 (288 of 293 windows) |
+| Steps | 5.8 on average; 15 wasted in all (a tool refused the call, or it repeated one) |
+| Time | 33 s on average; up to 91 s, for 15 patients by subway and bus |
 
-The windows read wrong were read in a way that didn't change the plan (`by 12:00` read as from
-12:00, for a patient visited in time anyway); the nurse is expected to write windows plainly. Most
-of the wasted calls asked for travel times before every address was found. The results, one line
-per case, are in `evals/results/`.
+The windows read wrong didn't change the plan, in these cases: `before noon` read as 08:00-12:00,
+which comes to the same since the day starts at 08:00, and `14:00-16:00` read as by 16:00, for a
+patient not visited; the nurse is expected to write windows plainly. Most of the wasted calls asked
+for travel times before every address was found. The way each leg is travelled by subway and bus
+on the page (see above) isn't part of these scores. The results, one line per case, are in
+`evals/results/`.
+
+## Setting up
+
+Everything runs on one computer. It needs Python 3.11, [Docker](https://www.docker.com),
+[Ollama](https://ollama.com), [Node.js](https://nodejs.org), a graphics card with about 8 GB for the
+model, and about 8 GB of disk for the data. None of the data is in the repository: it is downloaded,
+then built, into `data/` and `tools/` (commands from the project root; on Windows, in Git Bash).
+
+**The program and the model**
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt
+(cd frontend && npm install && npm run build)
+ollama pull llama3.1:8b
+```
+
+**The data.** With Docker running, one script does every step below that is not done yet. It lists
+them, and how much each downloads, and asks before it starts; about 800 MB is downloaded, and building
+takes longest for the road networks. A step that fails can be run again on its own, e.g.
+`--only osrm`; `--list` shows which steps are done.
+
+```bash
+.venv/Scripts/python scripts/setup.py
+docker compose up -d
+```
+
+### What the setup script does
+
+The same steps by hand, for doing one differently.
+
+**The map of New York, and what is built from it.** The OpenStreetMap extract for the state, 500 MB,
+from [Geofabrik](https://download.geofabrik.de/north-america/us/new-york.html). The address index
+and the streets for the subway and bus each take about 3 minutes to build.
+
+```bash
+mkdir -p data/osm
+curl -L -o data/osm/new-york-latest.osm.pbf https://download.geofabrik.de/north-america/us/new-york-latest.osm.pbf
+.venv/Scripts/python scripts/build_addresses.py data/osm/new-york-latest.osm.pbf data/addresses.db
+.venv/Scripts/python scripts/extract_streets.py data/osm/new-york-latest.osm.pbf data/osm/brooklyn-manhattan.osm.pbf
+```
+
+**The road routers.** One road network for each way of travelling, built by OSRM in Docker: 2.8 GB
+for walking and 1.8 GB for driving. In Git Bash, first `export MSYS_NO_PATHCONV=1`, so that it leaves
+the paths in these commands alone.
+
+```bash
+OSRM=ghcr.io/project-osrm/osrm-backend:v5.27.1
+for pair in walking:foot driving:car; do
+  mode=${pair%:*}; profile=${pair#*:}
+  mkdir -p data/osrm/$mode && cp data/osm/new-york-latest.osm.pbf data/osrm/$mode/map.osm.pbf
+  docker run --rm -v "$PWD/data/osrm/$mode:/data" $OSRM osrm-extract -p /opt/$profile.lua /data/map.osm.pbf
+  docker run --rm -v "$PWD/data/osrm/$mode:/data" $OSRM osrm-partition /data/map.osrm
+  docker run --rm -v "$PWD/data/osrm/$mode:/data" $OSRM osrm-customize /data/map.osrm
+  rm data/osrm/$mode/map.osm.pbf
+done
+docker compose up -d
+```
+
+**The subway and bus.** The MTA's timetables (GTFS), 40 MB. They run to a last day, a few months
+ahead: planning for a day after that is refused, until newer ones are downloaded. No ferry
+timetable is among them. R5 itself needs Java 21: unpack one into `tools/` as a folder `jdk-*`, e.g.
+[Temurin](https://adoptium.net/temurin/releases/?version=21), or set `JAVA_HOME`. r5py downloads R5
+the first time, unless a file `r5-*.jar` is in `tools/`
+([this one](https://github.com/r5py/r5/releases/download/v7.5.1-r5py/r5-v7.5.1-r5py-all.jar), 64 MB).
+The network is built the first time a plan goes by subway and bus, and kept in `data/r5` (900 MB).
+
+```bash
+mkdir -p data/gtfs
+for feed in subway b m busco; do
+  curl -L -o data/gtfs/gtfs_$feed.zip https://rrgtfsfeeds.s3.amazonaws.com/gtfs_$feed.zip
+done
+```
+
+**The offline map**, for the page, into `data/map` (60 MB):
+
+1. The map file. Download `pmtiles` from the [go-pmtiles releases](https://github.com/protomaps/go-pmtiles/releases)
+   into `tools/pmtiles`, and cut Brooklyn and Manhattan out of a daily Protomaps build (any date listed at
+   [maps.protomaps.com/builds](https://maps.protomaps.com/builds)). It reads only the part of the world file it needs:
+   `tools/pmtiles/pmtiles extract https://build.protomaps.com/20261106.pmtiles data/map/nyc.pmtiles --bbox=-74.06,40.55,-73.83,40.89 --maxzoom=15`
+2. The fonts and icons, from [protomaps/basemaps-assets](https://github.com/protomaps/basemaps-assets): the folders
+   `fonts/Noto Sans Regular`, `fonts/Noto Sans Medium` and `fonts/Noto Sans Italic` into `data/map/fonts`, and
+   `sprites/v4/light*` and `sprites/v4/dark*` into `data/map/sprites/v4`.
 
 ## Commands
 
-Run from the project root, in the project's Python environment (`.venv`). The model runs in
-[Ollama](https://ollama.com): install it, then `ollama pull llama3.1:8b`. The road routers run in
-Docker: start Docker, then the routers. The page needs [Node.js](https://nodejs.org) to build.
+Run from the project root, in the project's Python environment (`.venv`), with Ollama and Docker running.
 
 | What | Command |
 |---|---|
 | Start the road routers, for walking and driving | `docker compose up -d` |
-| Build the page (once, and after changing it) | `cd frontend && npm install && npm run build` |
+| Build the page again, after changing it | `cd frontend && npm run build` |
 | Start the planner and its page, then open http://127.0.0.1:8000 | `.venv/Scripts/python -m homecare.web` |
 | Work on the page, reloading as it changes (with the planner running), at http://127.0.0.1:5173 | `cd frontend && npm run dev` |
 | Plan tomorrow in the terminal, showing every step | `.venv/Scripts/python -m homecare.agent examples/18th_avenue.csv --home "6302 18th Ave, Brooklyn"` |
@@ -302,17 +387,5 @@ Docker: start Docker, then the routers. The page needs [Node.js](https://nodejs.
 | The same, driving | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --mode driving` |
 | The same, by subway and bus, on a given day | `.venv/Scripts/python -m homecare.agent examples/patients.csv --home "1025 70th St, Brooklyn" --mode transit --date 2026-11-09` |
 | Run the tests | `.venv/Scripts/python -m pytest` |
-| Run the evaluation (about 12 minutes), or only some cases | `.venv/Scripts/python -m evals.run`, `... --cases bay_ridge` |
+| Run the evaluation (about 17 minutes), or only some cases | `.venv/Scripts/python -m evals.run`, `... --cases bay_ridge` |
 | See every case's answer key | `.venv/Scripts/python -m evals.keys` |
-
-### Making the offline map
-
-The map's files are downloaded once, into `data/map`:
-
-1. The map file. Download `pmtiles.exe` from the [go-pmtiles releases](https://github.com/protomaps/go-pmtiles/releases)
-   (into `tools/pmtiles`), and cut Brooklyn and Manhattan out of a daily Protomaps build (any date listed at
-   [maps.protomaps.com/builds](https://maps.protomaps.com/builds)). It reads only the part of the world file it needs:
-   `tools/pmtiles/pmtiles.exe extract https://build.protomaps.com/20261106.pmtiles data/map/nyc.pmtiles --bbox=-74.06,40.55,-73.83,40.89 --maxzoom=15`
-2. The fonts and icons, from [protomaps/basemaps-assets](https://github.com/protomaps/basemaps-assets): the folders
-   `fonts/Noto Sans Regular`, `fonts/Noto Sans Medium` and `fonts/Noto Sans Italic` into `data/map/fonts`, and
-   `sprites/v4/light*` and `sprites/v4/dark*` into `data/map/sprites/v4`.

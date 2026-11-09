@@ -29,8 +29,7 @@ import zipfile
 from homecare.addresses import Place
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-JAVA = ROOT / "tools" / "jdk-21.0.13+9"
-R5_JAR = ROOT / "tools" / "r5-v7.5.1-r5py-all.jar"
+TOOLS = ROOT / "tools"  # Java 21 (a folder jdk-*) and R5 (a file r5-*.jar), downloaded by hand; see the README
 STREETS = ROOT / "data" / "osm" / "brooklyn-manhattan.osm.pbf"
 TIMETABLES = ROOT / "data" / "gtfs"  # one GTFS zip per network: subway, Brooklyn buses, Manhattan buses, MTA Bus
 WORK = ROOT / "data" / "r5"  # R5's settings, cache and temporary files
@@ -53,10 +52,15 @@ def _start():
     if _r5py is None:
         (WORK / "temp").mkdir(parents=True, exist_ok=True)
         clear_old_temporary_files()
-        (WORK / "r5py.yml").write_text(f"r5-classpath: {R5_JAR.as_posix()}\nmax-memory: {MAX_MEMORY}\n"
-                                       f"temporary-directory: {(WORK / 'temp').as_posix()}\n", encoding="utf-8")
+        settings = [f"max-memory: {MAX_MEMORY}", f"temporary-directory: {(WORK / 'temp').as_posix()}"]
+        jars = sorted(TOOLS.glob("r5-*.jar"))
+        if jars:  # without one, r5py downloads the R5 it needs
+            settings.append(f"r5-classpath: {jars[-1].as_posix()}")
+        (WORK / "r5py.yml").write_text("\n".join(settings) + "\n", encoding="utf-8")
         saved = {name: os.environ.get(name) for name in ("APPDATA", "LOCALAPPDATA")}
-        os.environ["JAVA_HOME"] = str(JAVA)
+        javas = sorted(path for path in TOOLS.glob("jdk-*") if path.is_dir())
+        if javas:  # without one, the Java that JAVA_HOME names
+            os.environ["JAVA_HOME"] = str(javas[-1])
         os.environ["APPDATA"] = os.environ["LOCALAPPDATA"] = str(WORK)
         try:
             import r5py

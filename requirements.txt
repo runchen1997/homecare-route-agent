@@ -4,3 +4,6 @@
 pytest==9.2.0  # runs the tests
 fastapi==0.162.0  # the web service for the nurse's page
 uvicorn==0.54.0  # runs it
+httpx==0.28.1  # lets the tests call the web service
+r5py==1.1.7  # travel times by subway and bus (needs Java 21)
+osmium==4.3.2  # scripts/: the address index and R5's streets, from OpenStreetMap

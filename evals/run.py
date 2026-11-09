@@ -11,7 +11,7 @@ Each case is scored on separate counts, so a wrong plan shows why it is wrong:
 Results go to evals/results/<date and time>.jsonl, one line per case and run, and a summary is
 printed at the end.
 
-Run it (Ollama and the road routers must be running; all the cases take about 12 minutes):
+Run it (Ollama and the road routers must be running; all the cases take about 17 minutes):
     python -m evals.run
     python -m evals.run --cases bay_ridge --runs 3
 """
