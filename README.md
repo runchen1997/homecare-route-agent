@@ -9,7 +9,28 @@ computer, so patient addresses never leave it. The model reads the nurse's list,
 addresses, and chooses the plan; a solver it can call works out the best orders, and code
 checks the plan. The nurse uses it from a web page with a map of the day, on the same computer.
 
-> Status: being rebuilt one step at a time. Patient data in this repository is made up.
+![The nurse's page: five visits chosen from 15 patients in Sunset Park, Brooklyn, with the day's timeline beside the map](docs/screenshot.png)
+
+*Tomorrow, by subway and bus: 5 visits chosen from 15 patients in Sunset Park, Brooklyn. These
+patients live close together, so each leg is on foot; a bus is taken only where it is worth the
+time to the nurse.*
+
+**In short**
+
+- **Private by design.** The model (llama3.1:8b in Ollama), the road routers (OSRM) and the subway
+  and bus router (R5) all run on one computer with a 12 GB graphics card. No address is sent anywhere.
+- **A hybrid agent.** The model reads a list written any way, finds the addresses and decides each
+  step; a solver searches the orders, for up to 15 patients, and code checks every plan. Choosing
+  the order itself, the model handed in plans that walked 18-33% more than the best.
+- **The model gives a number; code compares.** Asked to choose between a bus and a walk, the model
+  took the bus every time. Asked how many extra minutes the nurse would put up with to walk less,
+  it was right in 40 of 40 clear cases; code compares that with the real minutes.
+- **Measured.** On 30 cases with answer keys: the best plan in 30, every address found in 30, 288 of
+  293 time windows read as meant; 33 seconds and 6 steps a plan on average.
+- **Runs from a clone.** One script, `scripts/setup.py`, downloads and builds the maps, routers and
+  timetables ([Setting up](#setting-up)).
+
+> Patient data in this repository is made up.
 
 ## An agent, not a pipeline
 
